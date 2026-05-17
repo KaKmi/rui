@@ -8,6 +8,8 @@
 
 # testing
 /coverage
+/playwright-report
+/test-results
 
 # next.js
 /.next/
@@ -25,8 +27,14 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# local env files
-.env*.local
+# local env files (NEVER commit real secrets)
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+# keep template:
+!.env.example
 
 # vercel
 .vercel
@@ -34,3 +42,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# prisma local db
+/prisma/*.db
+/prisma/*.db-journal
+
+# uploads (local dev)
+/uploads

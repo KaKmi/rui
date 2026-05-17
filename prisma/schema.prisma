@@ -1,0 +1,18 @@
+// Rui · Prisma schema (M0 占位 — M1.3 补全 spec §7 全部字段)
+// 数据库：Neon Postgres（serverless driver）。
+// Prisma 7：DB 连接信息放 `prisma.config.ts`，运行时走 `lib/db.ts` 里的 `@prisma/adapter-neon`。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// M0 占位模型，让 prisma generate 跑得通。
+// 完整 Job / Resume / Conversation / Message / ScanTask 在 M1.3 落地。
+model Placeholder {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+}
