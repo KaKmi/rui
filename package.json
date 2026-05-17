@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.78",
+    "@ai-sdk/react": "^3.0.186",
     "@neondatabase/serverless": "^1.1.0",
     "@prisma/adapter-neon": "^7.8.0",
     "@prisma/client": "^7.8.0",
