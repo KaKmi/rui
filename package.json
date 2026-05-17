@@ -16,8 +16,10 @@
     "test:e2e": "playwright test",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "db:ping": "tsx scripts/db-ping.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.78",

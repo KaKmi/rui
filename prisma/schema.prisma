@@ -1,6 +1,6 @@
-// Rui · Prisma schema (M0 占位 — M1.3 补全 spec §7 全部字段)
+// Rui · Prisma schema —— M1.3 落地 spec §7 全部字段
 // 数据库：Neon Postgres（serverless driver）。
-// Prisma 7：DB 连接信息放 `prisma.config.ts`，运行时走 `lib/db.ts` 里的 `@prisma/adapter-neon`。
+// 运行时连接由 lib/db.ts 的 PrismaNeon adapter 提供；迁移命令的连接放 prisma.config.ts。
 
 generator client {
   provider = "prisma-client-js"
@@ -10,9 +10,76 @@ datasource db {
   provider = "postgresql"
 }
 
-// M0 占位模型，让 prisma generate 跑得通。
-// 完整 Job / Resume / Conversation / Message / ScanTask 在 M1.3 落地。
-model Placeholder {
-  id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
+// ============================================================
+// Job —— spec §7 Job interface
+// 业务 ID 形如 "JD-2024-0118"，保留为主键；DB 自动 createdAt。
+// ============================================================
+model Job {
+  id              String   @id                    // "JD-2024-0118"
+  title           String
+  dept            String
+  level           String                          // "P7" / "P6 / P7"
+  location        String                          // 多地用 " / " 分隔
+  salary          String                          // "30-55K · 16薪"
+  type            String                          // '全职' | '实习' | '外包'
+  status          String                          // '草稿' | '招聘中' | '已暂停' | '已关闭'
+  owner           String                          // 用人经理
+  hr              String
+  headcount       Int
+
+  // 漏斗（denormalized）—— 这里跟随 spec §7 决策；后续可由触发器维护
+  resumes         Int      @default(0)
+  interviewed    Int      @default(0)
+  offer          Int      @default(0)
+
+  skills          String[]
+  description     String   @default("")
+  responsibilities String[] @default([])
+  requirements    String[] @default([])
+  nice            String[] @default([])
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  resumeList      Resume[] @relation("ResumeAppliedFor")
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ============================================================
+// Resume —— spec §7 Resume interface
+// breakdown / workHistory 用 Json (jsonb)；其余结构化字段走原生数组。
+// score 允许 null（spec §6.6.7「待评分」状态）。
+// ============================================================
+model Resume {
+  id            String   @id                      // "R-9821"
+  name          String
+  gender        String                            // '男' | '女'
+  age           Int
+  edu           String                            // "硕士 · 浙江大学"
+  yoe           Int
+  current       String                            // "字节跳动 · 高级前端工程师"
+  expected      String                            // "40-55K"
+  location      String
+  status        String                            // 'AI 已评分' | '待评分' | '已邀面' | '已 offer' | '已淘汰'
+
+  appliedForId  String                            // FK → Job.id
+  appliedFor    Job      @relation("ResumeAppliedFor", fields: [appliedForId], references: [id], onDelete: Restrict)
+  appliedAt     String                            // 展示文案 "今天 10:24"；真实 createdAt 见下
+
+  score         Int?                              // 0-100；null = 未评分
+  breakdown     Json                              // { skill, experience, education, project, stability } : Int
+  summary       String   @default("")
+  pros          String[] @default([])
+  cons          String[] @default([])
+  interview     String[] @default([])
+  skills        String[] @default([])
+  workHistory   Json?                             // [{ co, title, dur }]?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([appliedForId])
+  @@index([score])
 }

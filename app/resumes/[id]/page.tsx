@@ -18,14 +18,21 @@ import { Card } from '@/components/ui/Card';
 import { Chip } from '@/components/ui/Chip';
 import { ScoreRing } from '@/components/ui/ScoreRing';
 import { SectionTitle } from '@/components/ui/SectionTitle';
-import { findJob, findResume } from '@/lib/mock-data';
+import { prisma } from '@/lib/db';
+import { toJobDTO, toResumeDTO } from '@/lib/dto';
 import { verdictOfScore } from '@/lib/score-tone';
 
-export default function ResumeDetailPage({ params }: { params: { id: string } }) {
-  const resume = findResume(params.id);
-  if (!resume) notFound();
+export const dynamic = 'force-dynamic';
 
-  const job = findJob(resume.appliedFor);
+export default async function ResumeDetailPage({ params }: { params: { id: string } }) {
+  const row = await prisma.resume.findUnique({
+    where: { id: params.id },
+    include: { appliedFor: true },
+  });
+  if (!row) notFound();
+
+  const resume = toResumeDTO(row);
+  const job = toJobDTO(row.appliedFor);
 
   return (
     <div className="page">
@@ -36,8 +43,7 @@ export default function ResumeDetailPage({ params }: { params: { id: string } })
           </Link>
           <div>
             <div className="page-crumb">
-              简历池 / {resume.id}
-              {job && ` · 投递 ${job.id}`}
+              简历池 / {resume.id} · 投递 {job.id}
             </div>
             <div className="page-title">{resume.name}</div>
           </div>
@@ -185,14 +191,12 @@ export default function ResumeDetailPage({ params }: { params: { id: string } })
           <Card pad>
             <SectionTitle>投递信息</SectionTitle>
             <div className="resume-contact">
-              {job && (
-                <span>
-                  <Building size={11} /> 投递岗位：
-                  <Link href={`/jobs/${job.id}`} style={{ color: 'var(--neon-1)' }}>
-                    {job.title}
-                  </Link>
-                </span>
-              )}
+              <span>
+                <Building size={11} /> 投递岗位：
+                <Link href={`/jobs/${job.id}`} style={{ color: 'var(--neon-1)' }}>
+                  {job.title}
+                </Link>
+              </span>
               <span>
                 <Calendar size={11} /> 投递时间：{resume.appliedAt}
               </span>

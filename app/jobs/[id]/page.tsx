@@ -15,9 +15,12 @@ import { Chip } from '@/components/ui/Chip';
 import { KV } from '@/components/ui/KV';
 import { ScoreRing } from '@/components/ui/ScoreRing';
 import { SectionTitle } from '@/components/ui/SectionTitle';
-import { findJob, resumesForJob } from '@/lib/mock-data';
+import { prisma } from '@/lib/db';
+import { toJobDTO, toResumeDTO } from '@/lib/dto';
 import { badgeVariantOfScore, verdictOfScore } from '@/lib/score-tone';
 import type { JobStatus } from '@/types';
+
+export const dynamic = 'force-dynamic';
 
 const STATUS_VARIANT: Record<JobStatus, Parameters<typeof Badge>[0]['variant']> = {
   招聘中: 'ok',
@@ -26,14 +29,20 @@ const STATUS_VARIANT: Record<JobStatus, Parameters<typeof Badge>[0]['variant']> 
   已关闭: 'bad',
 };
 
-export default function JobDetailPage({ params }: { params: { id: string } }) {
-  const job = findJob(params.id);
-  if (!job) notFound();
-
-  const candidates = resumesForJob(job.id)
-    .slice()
-    .sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
-  const top5 = candidates.slice(0, 5);
+export default async function JobDetailPage({ params }: { params: { id: string } }) {
+  const row = await prisma.job.findUnique({
+    where: { id: params.id },
+    include: {
+      resumeList: {
+        orderBy: { score: 'desc' },
+        take: 5,
+      },
+    },
+  });
+  if (!row) notFound();
+  const job = toJobDTO(row);
+  const top5 = row.resumeList.map(toResumeDTO);
+  const candidateCount = await prisma.resume.count({ where: { appliedForId: job.id } });
 
   return (
     <div className="page">
@@ -148,7 +157,7 @@ export default function JobDetailPage({ params }: { params: { id: string } }) {
 
           <Card pad>
             <SectionTitle
-              hint={`共 ${candidates.length} 份`}
+              hint={`共 ${candidateCount} 份`}
               action={
                 <Link className="btn btn-ghost btn-sm" href="/resumes">
                   查看全部 <Chevron size={11} />
