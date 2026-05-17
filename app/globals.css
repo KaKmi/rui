@@ -510,7 +510,9 @@ a { color: inherit; text-decoration: none; }
   color: white;
 }
 .msg-body { min-width: 0; flex: 1; max-width: 100%; }
-.msg-user .msg-body { max-width: 70%; }
+/* 用户消息：气泡靠右贴头像（inline-block 默认贴 body 左缘，要 text-align: right 顶过去） */
+.msg-user .msg-body { max-width: 70%; text-align: right; }
+.msg-user .msg-header { justify-content: flex-end; }
 
 .msg-header {
   display: flex; align-items: center; gap: 8px;

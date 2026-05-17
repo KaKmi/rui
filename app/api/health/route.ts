@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { generateText } from 'ai';
 import { mimoModel, MIMO_MODEL_ID } from '@/lib/ai/mimo';
+import { withApiLog } from '@/lib/api-log';
+import { log } from '@/lib/log';
 
 /**
  * MiMo 探活接口 —— spec §6.6.9
@@ -49,20 +51,26 @@ async function probe(): Promise<HealthEntry> {
   }
 }
 
-export async function GET() {
+export const GET = withApiLog('GET /api/health', async () => {
   const now = Date.now();
-  if (!g.__mimoHealth || now - g.__mimoHealth.at > CACHE_TTL_MS) {
+  const cached = !!g.__mimoHealth && now - g.__mimoHealth.at <= CACHE_TTL_MS;
+  if (!cached) {
     g.__mimoHealth = await probe();
+    log.debug('health/probe', {
+      status: g.__mimoHealth.status,
+      latencyMs: g.__mimoHealth.latencyMs,
+    });
   }
-  const h = g.__mimoHealth;
+  const h = g.__mimoHealth!;
   return NextResponse.json(
     {
       status: h.status,
       model: MIMO_MODEL_ID,
       latencyMs: h.latencyMs,
       cachedAt: h.at,
+      cached,
       ...(h.error ? { error: h.error } : {}),
     },
     { status: h.status === 'online' ? 200 : 503 },
   );
-}
+});

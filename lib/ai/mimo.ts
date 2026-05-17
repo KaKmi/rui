@@ -1,4 +1,5 @@
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { log } from '@/lib/log';
 
 /**
  * 小米 MiMo 客户端封装。
@@ -28,16 +29,46 @@ if (!baseURL || !apiKey) {
 }
 
 const mimoFetch: typeof fetch = async (input, init) => {
+  let parsedBody: { model?: string; max_tokens?: number; stream?: boolean; messages?: unknown[]; tools?: unknown[] } | null = null;
   if (init?.body && typeof init.body === 'string') {
     try {
       const body = JSON.parse(init.body);
       body.thinking = { type: 'disabled' };
+      parsedBody = body;
       init = { ...init, body: JSON.stringify(body) };
     } catch {
       // 非 JSON 请求（罕见），原样放行
     }
   }
-  return fetch(input as URL, init);
+
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
+  const t0 = Date.now();
+  log.debug('mimo/req', {
+    url: url.split('?')[0],
+    model: parsedBody?.model,
+    stream: parsedBody?.stream,
+    maxTokens: parsedBody?.max_tokens,
+    msgCount: Array.isArray(parsedBody?.messages) ? parsedBody.messages.length : undefined,
+    toolCount: Array.isArray(parsedBody?.tools) ? parsedBody.tools.length : undefined,
+  });
+
+  try {
+    const res = await fetch(input as URL, init);
+    const ms = Date.now() - t0;
+    if (res.status >= 400) {
+      log.warn('mimo/res', { status: res.status, ms, model: parsedBody?.model });
+    } else {
+      log.info('mimo/res', { status: res.status, ms, model: parsedBody?.model });
+    }
+    return res;
+  } catch (e) {
+    log.error('mimo/fail', {
+      ms: Date.now() - t0,
+      err: e instanceof Error ? e.message : String(e),
+      model: parsedBody?.model,
+    });
+    throw e;
+  }
 };
 
 export const mimo = createAnthropic({ baseURL, apiKey, fetch: mimoFetch });

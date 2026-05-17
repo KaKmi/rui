@@ -60,6 +60,11 @@ export const Plus = (p: IconProps) => (
     <line x1="5" y1="12" x2="19" y2="12" />
   </SvgIcon>
 );
+export const Minus = (p: IconProps) => (
+  <SvgIcon {...p}>
+    <line x1="5" y1="12" x2="19" y2="12" />
+  </SvgIcon>
+);
 export const Upload = (p: IconProps) => (
   <SvgIcon {...p}>
     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />

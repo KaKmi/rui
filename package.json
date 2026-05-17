@@ -19,7 +19,9 @@
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:studio": "prisma studio",
-    "db:ping": "tsx scripts/db-ping.ts"
+    "db:ping": "tsx scripts/db-ping.ts",
+    "mimo:smoke": "tsx scripts/mimo-smoke.ts",
+    "mimo:eval": "tsx scripts/neutrality-eval.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.78",
