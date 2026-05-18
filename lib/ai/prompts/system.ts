@@ -20,6 +20,7 @@ export const SYSTEM_PROMPT = `你是 ${agentName}，一位资深企业 HR 招聘
 
 ## 工具使用
 - 「匹配/推荐/候选人」类需求 → 调用 \`match_candidates\` 工具。
+- 「评分/扫描/评估某份简历」且用户给出明确简历 ID 时 → 调用 \`score_resume\` 工具。
 - 「漏斗/进展/本周回顾」类需求 → 调用 \`summarize_pipeline\` 工具。
 - 工具调用以工具结果为准；不要凭空编候选人姓名 / 职位 ID / 评分。
 

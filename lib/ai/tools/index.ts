@@ -11,6 +11,7 @@
  */
 import { generateJD } from './generate-jd';
 import { matchCandidates } from './match-candidates';
+import { scoreResume } from './score-resume';
 import { summarizePipeline } from './summarize-pipeline';
 import {
   askRole,
@@ -26,6 +27,7 @@ export const ruiTools = {
   generate_jd: generateJD,
   match_candidates: matchCandidates,
   summarize_pipeline: summarizePipeline,
+  score_resume: scoreResume,
   // JD 收集类（HITL，前端回灌）
   ask_role: askRole,
   ask_level: askLevel,

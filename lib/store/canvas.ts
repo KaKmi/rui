@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { JDDraftData } from '@/app/chat/canvas/JDDraft';
 import type { MatchListData } from '@/app/chat/canvas/Recommendation';
 import type { PipelineReportData } from '@/app/chat/canvas/Report';
+import type { ResumeResultsData } from '@/app/chat/canvas/ResumeScan.client';
 
 /**
  * spec §6.6.1 右侧画布 kind 状态机。
@@ -19,8 +20,8 @@ export type CanvasState =
   | { kind: 'empty' }
   | { kind: 'jd-draft'; data: JDDraftData }
   | { kind: 'resume-upload'; jobId?: string }
-  | { kind: 'resume-scan'; taskId: string }
-  | { kind: 'resume-results'; data: unknown }
+  | { kind: 'resume-scan'; taskId: string; resumeIds: string[]; jobId?: string }
+  | { kind: 'resume-results'; data: ResumeResultsData }
   | { kind: 'match-list'; data: MatchListData }
   | { kind: 'pipeline-report'; data: PipelineReportData };
 

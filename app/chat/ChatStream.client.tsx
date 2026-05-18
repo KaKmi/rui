@@ -18,7 +18,14 @@ import { CanvasEmpty } from './canvas/CanvasEmpty';
 import { JDDraft, type JDDraftData } from './canvas/JDDraft';
 import { Recommendation, type MatchListData } from './canvas/Recommendation';
 import { Report, type PipelineReportData } from './canvas/Report';
+import {
+  ResumeResults,
+  ResumeScan,
+  type ResumeResultsData,
+} from './canvas/ResumeScan.client';
+import { ResumeUpload } from './canvas/ResumeUpload.client';
 import { useCanvas, canvasTitle, type CanvasState } from '@/lib/store/canvas';
+import type { Job } from '@/types';
 import {
   AskRole,
   AskLevel,
@@ -34,13 +41,15 @@ const agentName = process.env.NEXT_PUBLIC_AGENT_NAME ?? 'Rui';
 const USER_NAME = '陈思雨';
 const USER_ROLE = 'HR · 招聘组';
 
-type QuickPrompt = { icon: typeof Briefcase; text: string };
+type QuickPrompt =
+  | { kind: 'send'; icon: typeof Briefcase; text: string }
+  | { kind: 'open-upload'; icon: typeof Upload; text: string };
 
 const QUICK_PROMPTS: QuickPrompt[] = [
-  { icon: Briefcase, text: '我想起草一份新 JD。' },
-  { icon: Users, text: '把 JD-2024-0118 的候选人按匹配度排个序，给我 top 5。' },
-  { icon: TrendingUp, text: '汇总一下当前招聘漏斗，给我 3 条关键洞察。' },
-  { icon: Upload, text: '我想批量上传一批新简历。' },
+  { kind: 'send', icon: Briefcase, text: '我想起草一份新 JD。' },
+  { kind: 'send', icon: Users, text: '把 JD-2024-0118 的候选人按匹配度排个序，给我 top 5。' },
+  { kind: 'send', icon: TrendingUp, text: '汇总一下当前招聘漏斗，给我 3 条关键洞察。' },
+  { kind: 'open-upload', icon: Upload, text: '上传一批新简历' },
 ];
 
 const HITL_TOOL_NAMES = new Set([
@@ -169,7 +178,7 @@ function renderMessagePart(
   );
 }
 
-export function ChatStream() {
+export function ChatStream({ jobs }: { jobs: Job[] }) {
   /**
    * sendAutomaticallyWhen: HITL 工具 addToolResult 后自动续流。
    * 用 ref 守门：在 submit() 取消挂起 tool 时临时关掉自动续流，
@@ -202,6 +211,7 @@ export function ChatStream() {
     if (latest.kind === 'jd-draft') next = { kind: 'jd-draft', data: latest.payload as JDDraftData };
     else if (latest.kind === 'match-list') next = { kind: 'match-list', data: latest.payload as MatchListData };
     else if (latest.kind === 'pipeline-report') next = { kind: 'pipeline-report', data: latest.payload as PipelineReportData };
+    else if (latest.kind === 'resume-results') next = { kind: 'resume-results', data: latest.payload as ResumeResultsData };
     if (next) setCanvas(next);
   }, [messages, setCanvas]);
 
@@ -269,6 +279,10 @@ export function ChatStream() {
 
   function fireQuickPrompt(p: QuickPrompt) {
     if (busy) return;
+    if (p.kind === 'open-upload') {
+      setCanvas({ kind: 'resume-upload' });
+      return;
+    }
     submit(p.text);
   }
 
@@ -396,7 +410,12 @@ export function ChatStream() {
             />
             <div className="chat-input-foot">
               <div className="chat-toolset">
-                <button type="button" className="ci-pill" disabled>
+                <button
+                  type="button"
+                  className="ci-pill"
+                  onClick={() => setCanvas({ kind: 'resume-upload' })}
+                  disabled={busy}
+                >
                   <Upload size={11} /> 上传简历
                 </button>
               </div>
@@ -448,13 +467,15 @@ export function ChatStream() {
             {canvas.kind === 'jd-draft' && <JDDraft data={canvas.data} />}
             {canvas.kind === 'match-list' && <Recommendation data={canvas.data} />}
             {canvas.kind === 'pipeline-report' && <Report data={canvas.data} />}
-            {(canvas.kind === 'resume-upload' ||
-              canvas.kind === 'resume-scan' ||
-              canvas.kind === 'resume-results') && (
-              <div className="empty" style={{ padding: 40 }}>
-                {canvas.kind} —— M3 落地
-              </div>
+            {canvas.kind === 'resume-upload' && <ResumeUpload jobs={jobs} />}
+            {canvas.kind === 'resume-scan' && (
+              <ResumeScan
+                taskId={canvas.taskId}
+                resumeIds={canvas.resumeIds}
+                jobId={canvas.jobId}
+              />
             )}
+            {canvas.kind === 'resume-results' && <ResumeResults data={canvas.data} />}
           </div>
         </div>
       </aside>

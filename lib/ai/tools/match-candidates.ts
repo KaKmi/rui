@@ -38,7 +38,7 @@ export const matchCandidates = tool({
         yoe: r.yoe,
         current: r.current,
         expected: r.expected,
-        summary: r.summary.slice(0, 80),
+        summary: r.summary?.slice(0, 80) ?? '',
       })),
     };
   },

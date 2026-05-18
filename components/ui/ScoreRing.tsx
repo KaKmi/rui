@@ -3,8 +3,8 @@ import { cn } from '@/lib/cn';
 import { toneOfScore } from '@/lib/score-tone';
 
 export type ScoreRingProps = {
-  /** 0-100；传 null 表示未评分，渲染为虚线轨道 + 「—」 */
-  value: number | null;
+  /** 0-100；传 null/undefined 表示未评分，渲染为虚线轨道 + 「—」 */
+  value: number | null | undefined;
   size?: number;
   stroke?: number;
   showNum?: boolean;
@@ -21,7 +21,7 @@ export function ScoreRing({
   const r = (size - stroke) / 2;
   const c = 2 * Math.PI * r;
 
-  const isUnscored = value === null || Number.isNaN(value);
+  const isUnscored = value == null || Number.isNaN(value);
   const clamped = isUnscored ? 0 : Math.max(0, Math.min(100, value));
   const off = c * (1 - clamped / 100);
   const tone = isUnscored ? '' : toneOfScore(clamped);

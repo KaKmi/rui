@@ -18,7 +18,7 @@ export function ResumesTable({ resumes, jobs }: { resumes: Resume[]; jobs: Job[]
     const q = query.trim().toLowerCase();
     return resumes.filter((r) => {
       if (jdFilter !== 'all' && r.appliedFor !== jdFilter) return false;
-      if (r.score !== null && r.score < minScore) return false;
+      if (r.score != null && r.score < minScore) return false;
       if (q && !`${r.name}${r.current}${r.id}`.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -139,6 +139,10 @@ export function ResumesTable({ resumes, jobs }: { resumes: Resume[]; jobs: Job[]
             <tbody>
               {filtered.map((r) => {
                 const job = jobs.find((j) => j.id === r.appliedFor);
+                const displayName = r.name ?? `候选人 ${r.id}`;
+                const displayLocation = r.location ?? '地点待识别';
+                const displayCurrent = r.current ?? '当前公司待识别';
+                const displayExpected = r.expected ?? '待识别';
                 return (
                   <tr key={r.id} className="is-clickable">
                     <td>
@@ -154,7 +158,7 @@ export function ResumesTable({ resumes, jobs }: { resumes: Resume[]; jobs: Job[]
                           textDecoration: 'none',
                         }}
                       >
-                        {r.name}
+                        {displayName}
                         <div
                           style={{
                             fontSize: 11,
@@ -163,8 +167,8 @@ export function ResumesTable({ resumes, jobs }: { resumes: Resume[]; jobs: Job[]
                             fontWeight: 400,
                           }}
                         >
-                          {r.id} · {r.location}
-                          {r.score !== null && (
+                          {r.id} · {displayLocation}
+                          {r.score != null && (
                             <>
                               {' · '}
                               <Chip variant={badgeVariantOfScore(r.score)}>
@@ -192,15 +196,15 @@ export function ResumesTable({ resumes, jobs }: { resumes: Resume[]; jobs: Job[]
                       )}
                     </td>
                     <td>
-                      <span style={{ color: 'var(--fg-1)' }}>{r.current}</span>
+                      <span style={{ color: 'var(--fg-1)' }}>{displayCurrent}</span>
                     </td>
                     <td>
                       <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--fg-1)' }}>
-                        {r.yoe} 年
+                        {r.yoe == null ? '待识别' : `${r.yoe} 年`}
                       </span>
                     </td>
                     <td>
-                      <span style={{ color: 'var(--fg-1)' }}>{r.expected}</span>
+                      <span style={{ color: 'var(--fg-1)' }}>{displayExpected}</span>
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>{r.appliedAt}</span>

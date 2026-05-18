@@ -4,6 +4,9 @@
  * Prisma 生成的类型把 createdAt 当 Date、把 Json 字段当 JsonValue，
  * 但 spec §7 / `types/index.ts` 里 createdAt 是 string、breakdown 是结构化对象。
  * 这一层把 DB 形态翻译成"前端契约"。
+ *
+ * Resume 现在贯穿上传/解析/评分三阶段，"评分后字段"在 DB 里都允许 null，
+ * DTO 这里直接透传（不强制非空），交给 UI 渲染时按需 fallback。
  */
 import type {
   Job as PrismaJob,
@@ -52,6 +55,19 @@ export function toJobDTO(j: PrismaJob): Job {
 export function toResumeDTO(r: PrismaResume): Resume {
   return {
     id: r.id,
+    status: r.status as ResumeStatus,
+    appliedFor: r.appliedForId,
+    appliedAt: r.appliedAt,
+
+    // 文件元信息（M3.1）
+    originalFileUrl: r.originalFileUrl,
+    originalFileName: r.originalFileName,
+    originalFileSize: r.originalFileSize,
+    originalMimeType: r.originalMimeType,
+    parsedText: r.parsedText,
+    parseError: r.parseError,
+
+    // 评分后字段（M3.2 回填；M1.2 mock 已填好）
     name: r.name,
     gender: r.gender as Resume['gender'],
     age: r.age,
@@ -60,18 +76,13 @@ export function toResumeDTO(r: PrismaResume): Resume {
     current: r.current,
     expected: r.expected,
     location: r.location,
-    status: r.status as ResumeStatus,
-    appliedFor: r.appliedForId,
-    appliedAt: r.appliedAt,
     score: r.score,
-    breakdown: r.breakdown as unknown as ResumeBreakdown,
+    breakdown: r.breakdown ? (r.breakdown as unknown as ResumeBreakdown) : null,
     summary: r.summary,
     pros: r.pros,
     cons: r.cons,
     interview: r.interview,
     skills: r.skills,
-    workHistory: r.workHistory
-      ? (r.workHistory as unknown as WorkHistoryItem[])
-      : undefined,
+    workHistory: r.workHistory ? (r.workHistory as unknown as WorkHistoryItem[]) : null,
   };
 }

@@ -166,13 +166,19 @@ export default async function ResumeDetailPage({ params }: { params: { id: strin
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-4)' }}>
           <Card pad>
             <SectionTitle>评分拆解</SectionTitle>
-            <div className="breakdown">
-              <BarScore value={resume.breakdown.skill} label="技能匹配" />
-              <BarScore value={resume.breakdown.experience} label="经验深度" />
-              <BarScore value={resume.breakdown.education} label="教育背景" />
-              <BarScore value={resume.breakdown.project} label="项目复杂度" />
-              <BarScore value={resume.breakdown.stability} label="稳定性" />
-            </div>
+            {resume.breakdown ? (
+              <div className="breakdown">
+                <BarScore value={resume.breakdown.skill} label="技能匹配" />
+                <BarScore value={resume.breakdown.experience} label="经验深度" />
+                <BarScore value={resume.breakdown.education} label="教育背景" />
+                <BarScore value={resume.breakdown.project} label="项目复杂度" />
+                <BarScore value={resume.breakdown.stability} label="稳定性" />
+              </div>
+            ) : (
+              <div className="empty" style={{ padding: 24 }}>
+                待评分
+              </div>
+            )}
           </Card>
 
           {resume.skills.length > 0 && (

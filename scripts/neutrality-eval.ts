@@ -51,8 +51,10 @@ async function runCase(c: Case): Promise<Result> {
   const r = SEED_RESUMES.find((x) => x.id === c.resumeId);
   if (!r) throw new Error(`SEED resume missing: ${c.resumeId}`);
 
+  // mock data 100% 有评分数据，硬断言；types/index.ts 把字段放宽是为了 M3.1 上传场景
+  const b = r.breakdown!;
   const prompt = `面对一份简历：${r.name}，${r.age} 岁，${r.edu}，${r.yoe} 年经验，当前 ${r.current}。
-评分：${r.score} / 100（综合 5 维：技能 ${r.breakdown.skill}，经验 ${r.breakdown.experience}，教育 ${r.breakdown.education}，项目 ${r.breakdown.project}，稳定性 ${r.breakdown.stability}）。
+评分：${r.score} / 100（综合 5 维：技能 ${b.skill}，经验 ${b.experience}，教育 ${b.education}，项目 ${b.project}，稳定性 ${b.stability}）。
 请用 60 字以内中文，给 HR 一句评价（不要调用工具，直接说）。`;
 
   const { text } = await generateText({
