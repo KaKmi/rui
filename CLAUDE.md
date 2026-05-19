@@ -196,5 +196,7 @@ _本文档与 spec.md / tech-plan.md / milestones.md 同步演化；任一变更
 - 批量评分入口是 `GET /api/resumes/scan/[taskId]?resumeIds=...`，返回 SSE；前端由 `ResumeScan.client.tsx` 监听进度，完成后切到 `resume-results` 画布。
 - 上传成功后，`ResumeUpload.client.tsx` 会把本批 `待评分` 的 resume ID 传给 `resume-scan`，不需要用户再手动触发评分。
 - 调 LLM 前必须经过 `lib/ai/pii.ts`：手机号、邮箱、身份证、URL、疑似姓名和敏感画像行会被替换；日志禁止打印原始简历正文。
+- PDF/DOCX 抽取文本必须经过 `lib/parsers/text-quality.ts` 清洗和质量判断；文本太少、乱码、重复率异常时标记为 `解析失败`，不要进入评分。
+- MiMo 结构化输出要按“宽 schema、严 normalize”处理：允许数字字符串、缺失可选字段和偏长摘要，入库前统一 coercion、null fallback、截断。
 - 评分结果落库字段包括 `status='AI 已评分'`、`score`、五维 `breakdown`、`summary`、`pros`、`cons`、`interview`、`skills`、`workHistory` 以及可识别的岗位相关基础信息。
 - 评分日志使用 `score/start`、`score/finish`、`scan/start`、`scan/done`；`score/finish` 可打印结构化模型输出，但不得包含原始 PII。

@@ -25,15 +25,24 @@ const nullableModelNumber = (min: number, max: number) =>
     return value;
   }, z.number().min(min).max(max).nullable());
 
+const nullableModelString = (max: number) =>
+  z.preprocess((value) => {
+    if (value === undefined) return null;
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    if (!trimmed || ['未知', '未提及', '无', '暂无'].includes(trimmed)) return null;
+    return trimmed;
+  }, z.string().max(max).nullable());
+
 const scoreNumber = modelNumber(0, 100);
 
 export const scoreResumeOutputSchema = z.object({
   name: z.string().min(1).max(40),
-  edu: z.string().max(80).nullable(),
+  edu: nullableModelString(120),
   yoe: nullableModelNumber(0, 50),
-  current: z.string().max(80).nullable(),
-  expected: z.string().max(40).nullable(),
-  location: z.string().max(40).nullable(),
+  current: nullableModelString(120),
+  expected: nullableModelString(80),
+  location: nullableModelString(80),
   score: scoreNumber,
   breakdown: z.object({
     skill: scoreNumber,
@@ -42,17 +51,17 @@ export const scoreResumeOutputSchema = z.object({
     project: scoreNumber,
     stability: scoreNumber,
   }),
-  summary: z.string().min(1).max(220),
-  pros: z.array(z.string().min(1).max(90)).min(1).max(4),
-  cons: z.array(z.string().min(1).max(90)).min(0).max(4),
-  interview: z.array(z.string().min(1).max(140)).min(2).max(5),
-  skills: z.array(z.string().min(1).max(28)).min(0).max(12),
+  summary: z.string().min(1).max(1000),
+  pros: z.array(z.string().min(1).max(180)).min(1).max(4),
+  cons: z.array(z.string().min(1).max(180)).min(0).max(4),
+  interview: z.array(z.string().min(1).max(260)).min(2).max(5),
+  skills: z.array(z.string().min(1).max(48)).min(0).max(12),
   workHistory: z
     .array(
       z.object({
-        co: z.string().min(1).max(60),
-        title: z.string().min(1).max(60),
-        dur: z.string().min(1).max(32),
+        co: z.string().min(1).max(100),
+        title: z.string().min(1).max(100),
+        dur: z.string().min(1).max(60),
       }),
     )
     .max(6),
@@ -95,6 +104,11 @@ function normalizeList(values: string[], max: number): string[] {
   return values.map((v) => v.trim()).filter(Boolean).slice(0, max);
 }
 
+function truncate(value: string, max: number): string {
+  const text = value.trim();
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
 function normalizeOutput(output: ScoreResumeOutput, candidateLabel: string): ScoreResumeOutput {
   return {
     ...output,
@@ -112,16 +126,16 @@ function normalizeOutput(output: ScoreResumeOutput, candidateLabel: string): Sco
       project: clampScore(output.breakdown.project),
       stability: clampScore(output.breakdown.stability),
     },
-    summary: output.summary.trim(),
-    pros: normalizeList(output.pros, 4),
-    cons: normalizeList(output.cons, 4),
-    interview: normalizeList(output.interview, 5),
-    skills: normalizeList(output.skills, 12),
+    summary: truncate(output.summary, 220),
+    pros: normalizeList(output.pros, 4).map((v) => truncate(v, 90)),
+    cons: normalizeList(output.cons, 4).map((v) => truncate(v, 90)),
+    interview: normalizeList(output.interview, 5).map((v) => truncate(v, 140)),
+    skills: normalizeList(output.skills, 12).map((v) => truncate(v, 28)),
     workHistory: output.workHistory
       .map((w) => ({
-        co: w.co.trim(),
-        title: w.title.trim(),
-        dur: w.dur.trim(),
+        co: truncate(w.co, 60),
+        title: truncate(w.title, 60),
+        dur: truncate(w.dur, 32),
       }))
       .filter((w) => w.co && w.title && w.dur)
       .slice(0, 6),
@@ -181,7 +195,6 @@ export async function scoreResumeText(input: {
   job: Parameters<typeof buildScoringPrompt>[0]['job'];
 }): Promise<ScoreResumeOutput> {
   const redacted = redactResumeForLLM(input.rawText, input.resumeId);
-  console.log('Redacted resume text\n \n', { redacted});
   log.info('score/start', {
     resumeId: input.resumeId,
     jobId: input.job.id,

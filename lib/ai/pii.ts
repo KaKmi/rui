@@ -71,7 +71,7 @@ function addNameCandidate(names: Set<string>, value: string) {
 
 function collectLikelyNames(text: string): string[] {
   const names = new Set<string>();
-  const explicitMatches = text.matchAll(EXPLICIT_NAME_RE);
+  const explicitMatches = Array.from(text.matchAll(EXPLICIT_NAME_RE));
   for (const match of explicitMatches) {
     if (match[1]) addNameCandidate(names, match[1]);
   }
@@ -94,14 +94,14 @@ export function redactResumeForLLM(rawText: string, resumeId: string): ResumeRed
   const originalChars = rawText.length;
   let text = cleanExtractedText(rawText);
 
+  const ids = countMatches(text, ID_CARD_RE);
+  text = text.replace(ID_CARD_RE, '[ID_CARD]');
+
   const emails = countMatches(text, EMAIL_RE);
   text = text.replace(EMAIL_RE, '[EMAIL]');
 
   const phones = countMatches(text, CN_PHONE_RE);
   text = text.replace(CN_PHONE_RE, '[PHONE]');
-
-  const ids = countMatches(text, ID_CARD_RE);
-  text = text.replace(ID_CARD_RE, '[ID_CARD]');
 
   const urls = countMatches(text, URL_RE);
   text = text.replace(URL_RE, '[URL]');
