@@ -6,7 +6,8 @@ const EMAIL_RE = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
 const CN_PHONE_RE = /(?:(?:\+?86[-\s]?)?1[3-9]\d[-\s]?\d{4}[-\s]?\d{4})/g;
 const ID_CARD_RE = /\b\d{6}(?:19|20)\d{2}(?:0\d|1[0-2])(?:[0-2]\d|3[01])\d{3}[\dXx]\b/g;
 const URL_RE = /https?:\/\/[^\s]+/gi;
-const EXPLICIT_NAME_RE = /(?:姓名|Name)\s*[:：]\s*([\u4e00-\u9fff\s]{2,10})/gi;
+// 注意：捕获组不能用 \s，会跨行把 "姓名：张三\n手机..." 捕成 "张三手机"
+const EXPLICIT_NAME_RE = /(?:姓名|Name)[ \t]*[:：][ \t]*([\u4e00-\u9fff][\u4e00-\u9fff \t　]{1,9})/gi;
 
 const PROFILE_LINE_RE =
   /^(?:性别|年龄|出生年月|出生日期|生日|婚育|民族|籍贯|户籍|政治面貌)\s*[:：].*$/;
@@ -41,10 +42,6 @@ export type ResumeRedactionResult = {
 
 function countMatches(text: string, re: RegExp): number {
   return text.match(re)?.length ?? 0;
-}
-
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function normalizeNameCandidate(value: string): string {
@@ -84,15 +81,15 @@ function collectLikelyNames(text: string): string[] {
   return Array.from(names);
 }
 
-function namePattern(name: string): RegExp {
-  const pattern = Array.from(name).map(escapeRegExp).join('\\s*');
-  return new RegExp(pattern, 'g');
-}
-
 export function redactResumeForLLM(rawText: string, resumeId: string): ResumeRedactionResult {
-  const candidateLabel = `候选人 ${resumeId}`;
+  // 姓名不再脱敏：LLM 评分时直接看真名。候选人 label 用第一个识别到的真名，
+  // 识别不到才退回 "候选人 R-XXX"，作为 normalizeOutput 兜底用。
+  // 其他 PII（电话 / 邮箱 / 身份证 / URL / 敏感个人字段）继续脱。
   const originalChars = rawText.length;
   let text = cleanExtractedText(rawText);
+
+  const likelyNames = collectLikelyNames(text);
+  const candidateLabel = likelyNames[0] ?? `候选人 ${resumeId}`;
 
   const ids = countMatches(text, ID_CARD_RE);
   text = text.replace(ID_CARD_RE, '[ID_CARD]');
@@ -105,11 +102,6 @@ export function redactResumeForLLM(rawText: string, resumeId: string): ResumeRed
 
   const urls = countMatches(text, URL_RE);
   text = text.replace(URL_RE, '[URL]');
-
-  const likelyNames = collectLikelyNames(text);
-  for (const name of likelyNames) {
-    text = text.replace(namePattern(name), '[NAME]');
-  }
 
   let profileLines = 0;
   text = text

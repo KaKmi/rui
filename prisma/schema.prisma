@@ -94,6 +94,11 @@ model Resume {
   skills        String[] @default([])
   workHistory   Json?                             // [{ co, title, dur }]?
 
+  // —— M4 写操作时间戳 ——
+  invitedAt     DateTime?                         // 推进到面试时落
+  rejectedAt    DateTime?                         // 标记不合适时落
+  rejectReason  String?                           // 不合适理由（可选）
+
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 

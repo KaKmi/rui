@@ -18,8 +18,11 @@ import { ACCEPT_ATTR, isAcceptedByName } from '@/lib/parsers/accept';
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 与服务端 route 对齐
 const MAX_FILES_PER_BATCH = 10;
 
+type UploadStage = 'queued' | 'parsing' | 'ocr' | 'uploading' | 'saving' | 'done' | 'failed';
+
 type Item =
   | { kind: 'pending'; file: File }
+  | { kind: 'uploading'; file: File; stage: UploadStage }
   | {
       kind: 'done';
       file: File;
@@ -148,11 +151,29 @@ function newClientTaskId(): string {
   return `SCAN-${t}${r}`;
 }
 
+const STAGE_LABEL: Record<UploadStage, string> = {
+  queued: '排队中…',
+  parsing: '解析文本…',
+  ocr: '识别扫描件…',
+  uploading: '上传到云端…',
+  saving: '写入简历池…',
+  done: '已完成',
+  failed: '失败',
+};
+
+function StageLabel({ stage }: { stage: UploadStage }) {
+  return (
+    <span style={{ color: 'var(--neon-1)' }}>
+      <span className="stage-dot" /> {STAGE_LABEL[stage]}
+    </span>
+  );
+}
+
 export function ResumeUpload({ jobs }: { jobs: Job[] }) {
   const initJobId = useCanvas((s) =>
     s.state.kind === 'resume-upload' ? s.state.jobId ?? null : null,
   );
-  const closeCanvas = useCanvas((s) => s.reset);
+  const closeCanvas = useCanvas((s) => s.hide);
   const setCanvas = useCanvas((s) => s.set);
 
   // 默认选第一个"招聘中"的 job；用户可改
@@ -223,76 +244,147 @@ export function ResumeUpload({ jobs }: { jobs: Job[] }) {
     setUploading(true);
     const uploadingItems = pending;
 
+    type ServerItem = {
+      id: string;
+      fileName: string;
+      status: '待评分' | '解析失败';
+      error?: string;
+    };
+    type UploadEvent =
+      | { type: 'start'; jobId: string; total: number; fileNames: string[] }
+      | { type: 'file-stage'; index: number; name: string; stage: UploadStage }
+      | { type: 'file-done'; index: number; item: ServerItem }
+      | {
+          type: 'done';
+          jobId: string;
+          taskId: string;
+          items: ServerItem[];
+          summary: { total: number; ok: number; failed: number };
+        };
+
+    const findItem = (prev: Item[], file: File) =>
+      prev.findIndex((it) => it.file === file);
+
+    const markStage = (file: File, stage: UploadStage) =>
+      setItems((prev) => {
+        const idx = findItem(prev, file);
+        if (idx < 0) return prev;
+        const cur = prev[idx]!;
+        if (cur.kind === 'done') return prev; // 已完结不覆盖
+        const next = prev.slice();
+        next[idx] = { kind: 'uploading', file: cur.file, stage };
+        return next;
+      });
+
+    const markDone = (file: File, r: ServerItem) =>
+      setItems((prev) => {
+        const idx = findItem(prev, file);
+        if (idx < 0) return prev;
+        const next = prev.slice();
+        next[idx] = {
+          kind: 'done',
+          file,
+          result: { id: r.id, status: r.status, error: r.error },
+        };
+        return next;
+      });
+
+    let finalItems: ServerItem[] = [];
     try {
-      // 单请求把全部文件一起发；服务端串行解析 PDF，避免 pdfjs-dist 并发冲突
+      // 全部文件一次性发；服务端 NDJSON 流式回推每文件的 stage 和最终结果
       const form = new FormData();
       for (const it of uploadingItems) form.append('files', it.file);
 
-      type ServerItem = {
-        id: string;
-        fileName: string;
-        status: '待评分' | '解析失败';
-        error?: string;
-      };
-      const fallbackError = (fileName: string, error: string): ServerItem => ({
-        id: '',
-        fileName,
-        status: '解析失败',
-        error,
-      });
+      // 进入 uploading 状态：所有 pending 行先标 queued
+      for (const it of uploadingItems) markStage(it.file, 'queued');
 
-      let results: ServerItem[];
-      try {
-        const res = await fetch(`/api/resumes/upload?jobId=${encodeURIComponent(jobId)}`, {
-          method: 'POST',
-          body: form,
-        });
-        if (!res.ok) {
-          const errBody = await res.json().catch(() => ({ error: res.statusText }));
-          const msg = errBody.error ?? '上传失败';
-          results = uploadingItems.map((it) => fallbackError(it.file.name, msg));
-        } else {
-          const data = (await res.json()) as { items: ServerItem[] };
-          // 按 fileName 回填，避免顺序错位
-          const byName = new Map<string, ServerItem[]>();
-          for (const r of data.items) {
-            const arr = byName.get(r.fileName) ?? [];
-            arr.push(r);
-            byName.set(r.fileName, arr);
-          }
-          results = uploadingItems.map((it) => {
-            const arr = byName.get(it.file.name);
-            const r = arr?.shift();
-            return r ?? fallbackError(it.file.name, '上传接口没有返回该文件的结果');
-          });
+      const res = await fetch(`/api/resumes/upload?jobId=${encodeURIComponent(jobId)}`, {
+        method: 'POST',
+        body: form,
+      });
+      if (!res.ok || !res.body) {
+        const text = await res.text().catch(() => '');
+        let errMsg = '上传失败';
+        try {
+          const j = JSON.parse(text) as { error?: string };
+          if (j.error) errMsg = j.error;
+        } catch {
+          if (text) errMsg = text.slice(0, 200);
         }
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        results = uploadingItems.map((it) => fallbackError(it.file.name, msg));
+        for (const it of uploadingItems) {
+          markDone(it.file, { id: '', fileName: it.file.name, status: '解析失败', error: errMsg });
+        }
+        return;
       }
 
-      setItems((prev) =>
-        prev.map((it) => {
-          if (it.kind === 'done') return it;
-          const index = uploadingItems.findIndex((p) => p === it);
-          const r = index >= 0 ? results[index] : undefined;
-          if (!r) return it;
-          return {
-            kind: 'done',
-            file: it.file,
-            result: { id: r.id, status: r.status, error: r.error },
-          };
-        }),
-      );
+      // —— 解析 NDJSON 流 ——
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      // 按 fileName 找回原 File 引用，避免依赖顺序
+      const fileByName = new Map<string, File[]>();
+      for (const it of uploadingItems) {
+        const arr = fileByName.get(it.file.name) ?? [];
+        arr.push(it.file);
+        fileByName.set(it.file.name, arr);
+      }
+      const consumed = new Set<File>();
+      const matchFile = (name: string): File | null => {
+        const arr = fileByName.get(name);
+        if (!arr) return null;
+        for (const f of arr) {
+          if (!consumed.has(f)) return f;
+        }
+        return null;
+      };
 
-      const resumeIds = results
-        .filter((item) => item.status === '待评分' && item.id)
-        .map((item) => item.id);
-      if (resumeIds.length > 0) {
-        setCanvas({ kind: 'resume-scan', taskId: newClientTaskId(), resumeIds, jobId });
+      // eslint-disable-next-line no-constant-condition
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+        for (const line of lines) {
+          const s = line.trim();
+          if (!s) continue;
+          let ev: UploadEvent;
+          try {
+            ev = JSON.parse(s) as UploadEvent;
+          } catch {
+            continue;
+          }
+          if (ev.type === 'file-stage') {
+            const f = matchFile(ev.name);
+            if (f) markStage(f, ev.stage);
+          } else if (ev.type === 'file-done') {
+            const f = matchFile(ev.item.fileName);
+            if (f) {
+              consumed.add(f);
+              markDone(f, ev.item);
+            }
+          } else if (ev.type === 'done') {
+            finalItems = ev.items;
+          }
+        }
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      for (const it of uploadingItems) {
+        markDone(it.file, { id: '', fileName: it.file.name, status: '解析失败', error: msg });
       }
     } finally {
       setUploading(false);
+    }
+
+    const resumeIds = finalItems
+      .filter((it) => it.status === '待评分' && it.id)
+      .map((it) => it.id);
+    if (resumeIds.length > 0) {
+      // 给 done 动画播一下再切换；450ms 与 ResumeScan→Results 的过渡时长保持一致
+      window.setTimeout(() => {
+        setCanvas({ kind: 'resume-scan', taskId: newClientTaskId(), resumeIds, jobId });
+      }, 450);
     }
   }
 
@@ -435,34 +527,66 @@ export function ResumeUpload({ jobs }: { jobs: Job[] }) {
             )}
           </div>
           <div className="file-list">
-            {items.map((it, i) => (
-              <div className="file-row" key={`${it.file.name}-${i}`}>
-                <div className="file-icon">
-                  <FileIcon size={12} />
-                </div>
-                <div className="file-name" style={{ minWidth: 0 }}>
-                  <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {it.file.name}
+            {items.map((it, i) => {
+              const rowClass = `file-row file-row--${it.kind}${
+                it.kind === 'uploading' ? ` is-${it.stage}` : ''
+              }${
+                it.kind === 'done'
+                  ? it.result.status === '待评分'
+                    ? ' is-ok'
+                    : ' is-failed'
+                  : ''
+              }`;
+              return (
+                <div className={rowClass} key={`${it.file.name}-${i}`}>
+                  <div className="file-icon">
+                    {it.kind === 'uploading' ? (
+                      <span className="spin-mini" />
+                    ) : it.kind === 'done' && it.result.status === '待评分' ? (
+                      <Check size={12} />
+                    ) : it.kind === 'done' && it.result.status === '解析失败' ? (
+                      <AlertTriangle size={12} />
+                    ) : (
+                      <FileIcon size={12} />
+                    )}
                   </div>
-                  {it.kind === 'done' && it.result.status === '解析失败' && (
-                    <div style={{ fontSize: 10, color: 'var(--bad)', marginTop: 2 }}>
-                      <AlertTriangle size={10} /> {it.result.error}
+                  <div className="file-name" style={{ minWidth: 0 }}>
+                    <div
+                      style={{
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {it.file.name}
                     </div>
-                  )}
-                  {it.kind === 'done' && it.result.status === '待评分' && (
-                    <div style={{ fontSize: 10, color: 'var(--ok)', marginTop: 2 }}>
-                      <Check size={10} /> 已解析 · {it.result.id}
+                    <div className="file-stage">
+                      {it.kind === 'uploading' && <StageLabel stage={it.stage} />}
+                      {it.kind === 'done' && it.result.status === '解析失败' && (
+                        <span style={{ color: 'var(--bad)' }}>{it.result.error}</span>
+                      )}
+                      {it.kind === 'done' && it.result.status === '待评分' && (
+                        <span style={{ color: 'var(--ok)' }}>已解析 · {it.result.id}</span>
+                      )}
+                      {it.kind === 'pending' && (
+                        <span style={{ color: 'var(--fg-3)' }}>等待上传</span>
+                      )}
                     </div>
+                  </div>
+                  <div className="file-size">{fmtSize(it.file.size)}</div>
+                  {!uploading && it.kind === 'pending' && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost btn-sm"
+                      onClick={() => removeAt(i)}
+                      aria-label={`从队列移除 ${it.file.name}`}
+                    >
+                      <X size={11} />
+                    </button>
                   )}
                 </div>
-                <div className="file-size">{fmtSize(it.file.size)}</div>
-                {!uploading && it.kind === 'pending' && (
-                  <button type="button" className="btn btn-ghost btn-sm" onClick={() => removeAt(i)}>
-                    <X size={11} />
-                  </button>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         </>
       )}
@@ -480,7 +604,7 @@ export function ResumeUpload({ jobs }: { jobs: Job[] }) {
         >
           {uploading ? (
             <>
-              <span className="spin-mini" /> 上传中…
+              <span className="spin-mini" /> 处理中 {done.length}/{items.length}…
             </>
           ) : (
             <>

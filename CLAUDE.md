@@ -87,7 +87,7 @@
 - HITL 工具靠 `useChat({ sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls })` 续流，前端 widget 渲染在 chat 气泡内，用户操作 → `addToolResult({tool, toolCallId, output})` 回灌。
 - 系统提示词集中在 `lib/ai/prompts/`，按场景拆分。
 - **中性表达**：禁止 prompt 中出现"建议拒绝/淘汰"等强表态（§9）。改完系统提示词必须跑 `pnpm mimo:eval` 5-case 验证。
-- **PII 脱敏**：调 LLM 前一律走 `lib/ai/pii.ts`；日志中不得出现原始姓名 / 电话 / 邮箱。
+- **PII 脱敏**（已松绑 · 2026-05-20）：调 LLM 前仍走 `lib/ai/pii.ts`，但**姓名保留**（让评分卡能显示真名），其余 PII（电话 / 邮箱 / 身份证 / URL / 性别年龄等敏感个人字段）继续脱。日志中仍不得出现原始电话 / 邮箱 / 身份证。
 - **MiMo 适配**（已踩过的两个坑，固化在 `lib/ai/mimo.ts`）：
   1. `MIMO_BASE_URL` 必须以 `/v1` 结尾，SDK 内部会再拼 `/messages`
   2. MiMo 默认开 thinking mode 多轮要求 `reasoning_content` 回传，用 fetch 拦截器在 body 里强塞 `thinking: {type:'disabled'}` 关掉

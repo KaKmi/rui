@@ -4,25 +4,27 @@
  * **此文件只能在 server 端 import**（带 pdf-parse + mammoth ~ 几百 kB），
  * 客户端要用接受类型常量请走 `@/lib/parsers/accept`。
  */
-import { parsePdf, type ParseResult } from './pdf';
+import { parsePdf, type ParseResult, type ParseStage } from './pdf';
 import { parseDocx } from './docx';
 import { ACCEPTED_MIME, isAcceptedByName, isAcceptedMime } from './accept';
 
-export type { ParseResult };
+export type { ParseResult, ParseStage };
 export { ACCEPTED_MIME, isAcceptedByName, isAcceptedMime };
 
 export async function parseResume(
   buffer: Buffer,
   mime: string | null | undefined,
   fileName: string,
+  onStage?: (stage: ParseStage) => void,
 ): Promise<ParseResult> {
   if (mime === ACCEPTED_MIME.pdf || fileName.toLowerCase().endsWith('.pdf')) {
-    return parsePdf(buffer);
+    return parsePdf(buffer, onStage);
   }
   if (
     mime === ACCEPTED_MIME.docx ||
     fileName.toLowerCase().endsWith('.docx')
   ) {
+    onStage?.('parsing');
     return parseDocx(buffer);
   }
   return { ok: false, error: `不支持的文件类型: ${mime ?? '(unknown)'} / ${fileName}` };

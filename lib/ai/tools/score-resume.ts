@@ -110,9 +110,12 @@ function truncate(value: string, max: number): string {
 }
 
 function normalizeOutput(output: ScoreResumeOutput, candidateLabel: string): ScoreResumeOutput {
+  // LLM 返回的 name 优先用；空 / "未知" 兜底用 candidateLabel
+  const llmName = output.name?.trim();
+  const isPlaceholder = !llmName || ['未知', '未提及', '无', '暂无', 'N/A', 'NA'].includes(llmName);
   return {
     ...output,
-    name: candidateLabel,
+    name: isPlaceholder ? candidateLabel : llmName,
     edu: normalizeNullableString(output.edu),
     current: normalizeNullableString(output.current),
     expected: normalizeNullableString(output.expected),
@@ -161,11 +164,11 @@ function buildScoringPrompt(input: {
   };
 }): string {
   const { job } = input;
-  return `你是 Rui 的结构化简历评分器。请基于“岗位要求”和“已脱敏简历文本”输出 JSON。
+  return `你是 Rui 的结构化简历评分器。请基于“岗位要求”和“简历文本”输出 JSON。
 
 硬性规则：
-- name 必须严格等于 "${input.candidateLabel}"，不要输出或还原候选人真实姓名。
-- 不要输出年龄、性别、电话、邮箱、身份证、微信等个人敏感信息。
+- name 字段输出候选人的真实姓名（如简历中能识别）；无法识别时填 "${input.candidateLabel}"。
+- 不要输出年龄、性别、电话、邮箱、身份证、微信等其它个人敏感信息（这些字段在简历里已被替换为 [PHONE]/[EMAIL]/[ID_CARD] 等占位符）。
 - 只根据岗位相关证据评分，不使用性别、年龄、婚育、民族、籍贯等敏感属性。
 - yoe、score、breakdown 里的所有字段必须是 JSON number，不要写成字符串，不要带“年”或百分号。
 - expected 只填写简历里明确出现的期望薪资；没有就填 null，不要填写期望岗位。
@@ -185,7 +188,7 @@ function buildScoringPrompt(input: {
 - 要求：${job.requirements.join('；') || '未配置'}
 - 加分项：${job.nice.join('；') || '未配置'}
 
-已脱敏简历文本：
+简历文本（姓名保留，电话/邮箱/身份证已脱敏）：
 ${input.resumeText}`;
 }
 
@@ -198,30 +201,47 @@ export async function scoreResumeText(input: {
   log.info('score/start', {
     resumeId: input.resumeId,
     jobId: input.job.id,
+    candidateLabel: redacted.candidateLabel,
     redaction: redacted.stats,
   });
 
-  const result = await generateObject({
-    model: mimoModel,
-    schema: scoreResumeOutputSchema,
-    schemaName: 'score_resume',
-    schemaDescription:
-      'Rui resume scoring result with five 0-100 dimensions, neutral summary, pros, cons, and interview questions.',
-    prompt: buildScoringPrompt({
-      resumeId: input.resumeId,
-      candidateLabel: redacted.candidateLabel,
-      resumeText: redacted.text,
-      job: input.job,
-    }),
-    temperature: 0.2,
-    maxOutputTokens: 1800,
-    experimental_repairText: async ({ text }) => {
-      const start = text.indexOf('{');
-      const end = text.lastIndexOf('}');
-      if (start >= 0 && end > start) return text.slice(start, end + 1);
-      return null;
-    },
+  const prompt = buildScoringPrompt({
+    resumeId: input.resumeId,
+    candidateLabel: redacted.candidateLabel,
+    resumeText: redacted.text,
+    job: input.job,
   });
+
+  const runOnce = async (attempt: number) =>
+    generateObject({
+      model: mimoModel,
+      schema: scoreResumeOutputSchema,
+      schemaName: 'score_resume',
+      schemaDescription:
+        'Rui resume scoring result with five 0-100 dimensions, neutral summary, pros, cons, and interview questions.',
+      prompt,
+      temperature: 0.2,
+      // attempt 1 给 2400 token 防截断；attempt 0 用 1800 节约成本
+      maxOutputTokens: attempt === 0 ? 1800 : 2400,
+      experimental_repairText: async ({ text }) => {
+        const start = text.indexOf('{');
+        const end = text.lastIndexOf('}');
+        if (start >= 0 && end > start) return text.slice(start, end + 1);
+        return null;
+      },
+    });
+
+  let result: Awaited<ReturnType<typeof runOnce>>;
+  try {
+    result = await runOnce(0);
+  } catch (e) {
+    log.warn('score/retry', {
+      resumeId: input.resumeId,
+      jobId: input.job.id,
+      reason: e instanceof Error ? e.message : String(e),
+    });
+    result = await runOnce(1);
+  }
 
   const output = normalizeOutput(result.object, redacted.candidateLabel);
   log.info('score/finish', {

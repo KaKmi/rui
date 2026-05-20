@@ -1,92 +1,97 @@
 /**
- * 扫描件 PDF 的 OCR 降级通道。
+ * 扫描件 PDF 的 OCR 降级通道 —— 腾讯云通用印刷体识别 (GeneralBasicOCR)。
  *
- * 自渲染管线：pdfjs-dist（与 pdf-parse 同版本 5.4.296，避免 worker API 版本冲突）
- *  → @napi-rs/canvas 把每页渲染成 PNG
- *  → tesseract.js 识别中英文 → 拼接文本
+ * 选这套方案的原因：
+ *  - 中文识别率 95%+，比本地 tesseract.js 高一大截
+ *  - 直接吃 PDF base64 + 页号，省掉自己用 pdfjs 渲染那一层
+ *  - 数据走腾讯云国内节点，符合 CLAUDE.md "数据不出境" 的要求
+ *  - 免费额度 1000 次/月，够日常开发与小规模 demo
  *
- * worker 单例 + 懒加载，复用一次启动 + 加载语言模型的开销（~3-5s）。
- * 语言模型从仓库内的 traineddata 目录加载，不走网络。
+ * 环境变量（缺任一项 → OCR 直接返回失败，原 pdf-parse 报错原样抛回）：
+ *  - TENCENT_OCR_SECRET_ID
+ *  - TENCENT_OCR_SECRET_KEY
+ *  - TENCENT_OCR_REGION（可选，默认 ap-guangzhou）
  */
-import path from 'node:path';
-import { pathToFileURL } from 'node:url';
-import { createWorker, type Worker } from 'tesseract.js';
+import { ocr } from 'tencentcloud-sdk-nodejs-ocr';
 import { log } from '@/lib/log';
 
-const LANGS = ['chi_sim', 'eng'];
-const TRAINEDDATA_DIR = path.join(process.cwd(), 'lib', 'ocr', 'traineddata');
 const MAX_PAGES = 10; // 单份简历 OCR 最多 10 页，超出截断
-const RENDER_SCALE = 2; // 1x 对中文 OCR 偏糊，2x 文字清晰度足够、显存压力可接受
+const MAX_PDF_BYTES = 7 * 1024 * 1024; // 腾讯云 PDF base64 上限 7MB
 
-let workerPromise: Promise<Worker> | null = null;
-
-async function getWorker(): Promise<Worker> {
-  if (!workerPromise) {
-    workerPromise = (async () => {
-      const t0 = Date.now();
-      const w = await createWorker(LANGS, 1, {
-        langPath: pathToFileURL(TRAINEDDATA_DIR).toString(),
-        gzip: false,
-        cacheMethod: 'none',
-      });
-      log.info('ocr/worker-ready', { ms: Date.now() - t0, langs: LANGS });
-      return w;
-    })();
-    workerPromise.catch(() => {
-      workerPromise = null;
-    });
-  }
-  return workerPromise;
-}
-
-type RenderedCanvas = {
-  canvas: { toBuffer: (mime: string) => Buffer };
+type OcrPage = {
+  page: number;
+  text: string;
+  chars: number;
+  ms: number;
 };
 
-export async function ocrPdfBuffer(buffer: Buffer): Promise<string> {
-  // 动态 import：pdfjs legacy 是 ESM-only，避免被 Next 客户端 bundler 拽到
-  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+let clientPromise: Promise<InstanceType<typeof ocr.v20181119.Client> | null> | null = null;
 
-  const doc = await pdfjs.getDocument({
-    data: new Uint8Array(buffer),
-    isEvalSupported: false,
-    useSystemFonts: true,
-  }).promise;
-
-  const worker = await getWorker();
-  const pages: string[] = [];
-  const totalPages = Math.min(doc.numPages, MAX_PAGES);
-
-  try {
-    for (let i = 1; i <= totalPages; i += 1) {
-      const page = await doc.getPage(i);
-      const viewport = page.getViewport({ scale: RENDER_SCALE });
-      const factory = doc.canvasFactory as {
-        create: (w: number, h: number) => RenderedCanvas;
-        destroy: (entry: RenderedCanvas) => void;
-      };
-      const entry = factory.create(viewport.width, viewport.height);
-
-      try {
-        await page.render({ canvas: entry.canvas as unknown as HTMLCanvasElement, viewport }).promise;
-        const png = entry.canvas.toBuffer('image/png');
-        const t0 = Date.now();
-        const { data } = await worker.recognize(png);
-        log.info('ocr/page', {
-          page: i,
-          chars: data.text.length,
-          confidence: Math.round(data.confidence),
-          ms: Date.now() - t0,
-        });
-        pages.push(data.text);
-      } finally {
-        page.cleanup();
-        factory.destroy(entry);
-      }
+async function getClient(): Promise<InstanceType<typeof ocr.v20181119.Client> | null> {
+  if (clientPromise) return clientPromise;
+  clientPromise = (async () => {
+    const secretId = process.env.TENCENT_OCR_SECRET_ID;
+    const secretKey = process.env.TENCENT_OCR_SECRET_KEY;
+    if (!secretId || !secretKey) {
+      log.warn('ocr/missing-credentials', {
+        hint: '需要在 .env.local 配置 TENCENT_OCR_SECRET_ID / TENCENT_OCR_SECRET_KEY',
+      });
+      return null;
     }
-  } finally {
-    await doc.destroy().catch(() => {});
+    const region = process.env.TENCENT_OCR_REGION ?? 'ap-guangzhou';
+    return new ocr.v20181119.Client({
+      credential: { secretId, secretKey },
+      region,
+      profile: { httpProfile: { endpoint: 'ocr.tencentcloudapi.com' } },
+    });
+  })();
+  return clientPromise;
+}
+
+export async function ocrPdfBuffer(buffer: Buffer, pageCount: number): Promise<string> {
+  if (buffer.length > MAX_PDF_BYTES) {
+    throw new Error(`PDF 超过 ${Math.round(MAX_PDF_BYTES / 1024 / 1024)}MB（腾讯云 OCR 上限）`);
   }
 
-  return pages.join('\n').trim();
+  const client = await getClient();
+  if (!client) {
+    throw new Error('未配置腾讯云 OCR 凭据');
+  }
+
+  const pdfBase64 = buffer.toString('base64');
+  const totalPages = Math.min(pageCount, MAX_PAGES);
+  const pages: OcrPage[] = [];
+
+  for (let i = 1; i <= totalPages; i += 1) {
+    const t0 = Date.now();
+    try {
+      const res = await client.GeneralBasicOCR({
+        ImageBase64: pdfBase64,
+        IsPdf: true,
+        PdfPageNumber: i,
+        LanguageType: 'zh',
+      });
+      const text = (res.TextDetections ?? [])
+        .map((d) => d.DetectedText)
+        .filter((s): s is string => Boolean(s))
+        .join('\n');
+      const ms = Date.now() - t0;
+      log.info('ocr/page', { page: i, chars: text.length, ms });
+      pages.push({ page: i, text, chars: text.length, ms });
+    } catch (e) {
+      const err = e instanceof Error ? e.message : String(e);
+      log.warn('ocr/page-fail', { page: i, ms: Date.now() - t0, err });
+      // 单页失败不拖死整份；继续下一页
+    }
+  }
+
+  if (pages.length === 0) {
+    throw new Error('所有页 OCR 都失败了');
+  }
+
+  return pages
+    .sort((a, b) => a.page - b.page)
+    .map((p) => p.text)
+    .join('\n')
+    .trim();
 }

@@ -26,7 +26,6 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.78",
     "@ai-sdk/react": "^3.0.186",
-    "@napi-rs/canvas": "^1.0.0",
     "@neondatabase/serverless": "^1.1.0",
     "@prisma/adapter-neon": "^7.8.0",
     "@prisma/client": "^7.8.0",
@@ -36,10 +35,9 @@
     "mammoth": "^1.12.0",
     "next": "14.2.35",
     "pdf-parse": "^2.4.5",
-    "pdfjs-dist": "5.4.296",
     "react": "^18",
     "react-dom": "^18",
-    "tesseract.js": "5",
+    "tencentcloud-sdk-nodejs-ocr": "^4.1.233",
     "ws": "^8.20.1",
     "zod": "^4.4.3",
     "zustand": "^5.0.13"

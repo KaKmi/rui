@@ -9,6 +9,7 @@ import { ScoreRing } from '@/components/ui/ScoreRing';
 import { formatJobLabel, truncateText } from '@/lib/display';
 import { badgeVariantOfScore, verdictOfScore } from '@/lib/score-tone';
 import type { Job, Resume } from '@/types';
+import { ResumeRowActions } from './ResumeRowActions.client';
 
 export function ResumesTable({ resumes, jobs }: { resumes: Resume[]; jobs: Job[] }) {
   const [jdFilter, setJdFilter] = React.useState<string>('all');
@@ -134,7 +135,8 @@ export function ResumesTable({ resumes, jobs }: { resumes: Resume[]; jobs: Job[]
                 <th>当前公司</th>
                 <th>年限</th>
                 <th>期望薪资</th>
-                <th style={{ textAlign: 'right' }}>投递时间</th>
+                <th>投递时间</th>
+                <th style={{ textAlign: 'right', width: 120 }}>操作</th>
               </tr>
             </thead>
             <tbody>
@@ -209,8 +211,15 @@ export function ResumesTable({ resumes, jobs }: { resumes: Resume[]; jobs: Job[]
                     <td>
                       <span style={{ color: 'var(--fg-1)' }}>{displayExpected}</span>
                     </td>
-                    <td style={{ textAlign: 'right' }}>
+                    <td>
                       <span style={{ fontSize: 11, color: 'var(--fg-3)' }}>{r.appliedAt}</span>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <ResumeRowActions
+                        resumeId={r.id}
+                        name={fullName}
+                        status={r.status}
+                      />
                     </td>
                   </tr>
                 );

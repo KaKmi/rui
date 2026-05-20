@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { SideNav } from '@/components/nav/SideNav';
 import { TopBar } from '@/components/nav/TopBar';
+import { Toaster } from '@/components/ui/Toast';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -19,6 +20,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             {children}
           </div>
         </div>
+        <Toaster />
       </body>
     </html>
   );

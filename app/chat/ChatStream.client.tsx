@@ -6,6 +6,7 @@ import { lastAssistantMessageIsCompleteWithToolCalls, type UIMessage } from 'ai'
 import {
   AlertTriangle,
   Briefcase,
+  Refresh,
   Send,
   Sparkle,
   TrendingUp,
@@ -14,7 +15,6 @@ import {
   X,
 } from '@/components/icons/Icon';
 import { Markdown } from './canvas/Markdown';
-import { CanvasEmpty } from './canvas/CanvasEmpty';
 import { JDDraft, type JDDraftData } from './canvas/JDDraft';
 import { QuestionSet, type QuestionSetData } from './canvas/QuestionSet';
 import { Recommendation, type MatchListData } from './canvas/Recommendation';
@@ -26,6 +26,8 @@ import {
 } from './canvas/ResumeScan.client';
 import { ResumeUpload } from './canvas/ResumeUpload.client';
 import { useCanvas, canvasTitle, type CanvasState } from '@/lib/store/canvas';
+import { loadChatMessages, saveChatMessages, clearChatMessages } from '@/lib/store/chat-history';
+import { useToast } from '@/lib/store/toast';
 import { formatJobLabel } from '@/lib/display';
 import type { Job } from '@/types';
 import {
@@ -253,6 +255,8 @@ export function ChatStream({ jobs, initialPrompt }: { jobs: Job[]; initialPrompt
    * 「批量取消 + 跟一条用户新消息一起送」。
    */
   const autoSendRef = React.useRef(true);
+  // 注意：不在 useChat init 里读 localStorage —— 服务端 SSR 拿不到 localStorage，
+  // 客户端首屏要先用空数组与 server HTML 对齐，再在 useEffect 里把历史塞进去。
   const { messages, sendMessage, stop, status, error, clearError, addToolResult, setMessages } =
     useChat({
       sendAutomaticallyWhen: (opts) => {
@@ -260,6 +264,15 @@ export function ChatStream({ jobs, initialPrompt }: { jobs: Job[]; initialPrompt
         return lastAssistantMessageIsCompleteWithToolCalls(opts);
       },
     });
+  // mount 后异步 hydrate 聊天历史 + 触发 canvas store 的 persist 恢复
+  const hydratedRef = React.useRef(false);
+  React.useEffect(() => {
+    if (hydratedRef.current) return;
+    hydratedRef.current = true;
+    const saved = loadChatMessages();
+    if (saved.length > 0) setMessages(saved);
+    void useCanvas.persist.rehydrate();
+  }, [setMessages]);
   const [input, setInput] = React.useState('');
   const [pendingAssistant, setPendingAssistant] = React.useState(false);
   const [jobPickers, setJobPickers] = React.useState<JobPickerState[]>([]);
@@ -267,8 +280,14 @@ export function ChatStream({ jobs, initialPrompt }: { jobs: Job[]; initialPrompt
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
 
   const canvas = useCanvas((s) => s.state);
+  const canvasHidden = useCanvas((s) => s.hidden);
   const setCanvas = useCanvas((s) => s.set);
   const resetCanvas = useCanvas((s) => s.reset);
+  const restoreCanvas = useCanvas((s) => s.restore);
+  const pushToast = useToast((s) => s.push);
+
+  const canvasVisible = canvas.kind !== 'empty' && !canvasHidden;
+  const canvasRestorable = canvas.kind !== 'empty' && canvasHidden;
 
   const busy = status === 'streaming' || status === 'submitted';
   const quickPrompts = React.useMemo<QuickPrompt[]>(() => {
@@ -306,6 +325,27 @@ export function ChatStream({ jobs, initialPrompt }: { jobs: Job[]; initialPrompt
       setPendingAssistant(false);
     }
   }, [error, messages, pendingAssistant, status]);
+
+  // spec §6.1 全局 Esc：在画布开着时按 Esc 关闭（隐藏 + 保留 state，可以"恢复画布"找回来）。
+  // 即使焦点不在 chat textarea（比如停在画布按钮上）也要响应。
+  const hideCanvas = useCanvas((s) => s.hide);
+  React.useEffect(() => {
+    if (canvas.kind === 'empty') return;
+    function onGlobalKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      hideCanvas();
+    }
+    window.addEventListener('keydown', onGlobalKey);
+    return () => window.removeEventListener('keydown', onGlobalKey);
+  }, [canvas.kind, hideCanvas]);
+
+  // localStorage 持久化：messages 变化时写回。
+  // 流式过程中（status === 'streaming'）跳过，避免每帧 token 都写 localStorage。
+  React.useEffect(() => {
+    if (status === 'streaming' || status === 'submitted') return;
+    saveChatMessages(messages);
+  }, [messages, status]);
 
   /**
    * 把所有挂起的 HITL ask_* 工具标成 output-error，让模型在下次请求里
@@ -379,10 +419,42 @@ export function ChatStream({ jobs, initialPrompt }: { jobs: Job[]; initialPrompt
   }
 
   function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    // ⌘/Ctrl + Enter 发送
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       submit(input);
+      return;
     }
+    // ↑ 在 input 为空 + 没修饰键时，回填最近一条用户消息
+    if (
+      e.key === 'ArrowUp' &&
+      !e.shiftKey &&
+      !e.metaKey &&
+      !e.ctrlKey &&
+      !e.altKey &&
+      input.length === 0
+    ) {
+      for (let i = messages.length - 1; i >= 0; i -= 1) {
+        const m = messages[i];
+        if (m?.role !== 'user') continue;
+        const text = (m.parts ?? [])
+          .map((p) => (p && 'type' in p && p.type === 'text' ? (p as { text: string }).text : ''))
+          .filter(Boolean)
+          .join('\n')
+          .trim();
+        if (text) {
+          e.preventDefault();
+          setInput(text);
+          // 让光标落到末尾
+          window.requestAnimationFrame(() => {
+            const el = textareaRef.current;
+            if (el) el.setSelectionRange(text.length, text.length);
+          });
+          return;
+        }
+      }
+    }
+    // Esc 关右侧画布交给上面的全局监听处理，这里不再重复
   }
 
   function fireQuickPrompt(p: QuickPrompt) {
@@ -414,9 +486,49 @@ export function ChatStream({ jobs, initialPrompt }: { jobs: Job[]; initialPrompt
     (addToolResult as unknown as AddToolResult)(args);
   };
 
+  function startNewSession() {
+    if (busy) {
+      pushToast({ text: '请等当前对话完成或按发送区的「停止」', tone: 'warn' });
+      return;
+    }
+    cancelPendingHITL();
+    stop();
+    setMessages([]);
+    setInput('');
+    resetCanvas();
+    clearChatMessages();
+    pushToast({ text: '已开始新会话', tone: 'info' });
+    textareaRef.current?.focus();
+  }
+
   return (
-    <div className="work canvas-open">
+    <div className={`work ${canvasVisible ? 'canvas-open' : 'canvas-closed'}`}>
       <div className="chat-pane">
+        {(messages.length > 0 || canvasRestorable) && (
+          <div className="chat-toolbar">
+            {canvasRestorable && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => restoreCanvas()}
+                title={canvasTitle(canvas)}
+              >
+                <Sparkle size={11} /> 恢复画布 · {canvasTitle(canvas)}
+              </button>
+            )}
+            <div style={{ flex: 1 }} />
+            {messages.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={startNewSession}
+                title="清空对话与画布，开始一个新会话"
+              >
+                <Refresh size={11} /> 新会话
+              </button>
+            )}
+          </div>
+        )}
         <div className="chat-scroll" ref={scrollRef}>
           <div className="chat-inner">
             {/* 欢迎语 + Quick Prompts —— 仅在没有任何消息时显示 */}
@@ -636,6 +748,7 @@ export function ChatStream({ jobs, initialPrompt }: { jobs: Job[]; initialPrompt
       </div>
 
       {/* 右侧画布 —— store 驱动；jd-form 在前端打开，其余 kind 由 tool 结果填入 */}
+      {canvasVisible && (
       <aside className="canvas-pane">
         <div className="canvas-frame">
           <div className="canvas-head">
@@ -643,21 +756,20 @@ export function ChatStream({ jobs, initialPrompt }: { jobs: Job[]; initialPrompt
               <span className="canvas-title-pin" />
               <span>{canvasTitle(canvas)}</span>
             </div>
-            {canvas.kind !== 'empty' && (
-              <div className="canvas-head-tools">
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-sm"
-                  onClick={() => resetCanvas()}
-                  aria-label="关闭画布"
-                >
-                  <X size={12} />
-                </button>
-              </div>
-            )}
+            <div className="canvas-head-tools">
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm"
+                onClick={() => hideCanvas()}
+                aria-label="关闭画布（可在头部「恢复画布」按钮重新打开）"
+                title="关闭画布（不会丢，可在顶部「恢复画布」按钮重新打开）"
+              >
+                <X size={12} />
+              </button>
+            </div>
           </div>
           <div className="canvas-body">
-            {canvas.kind === 'empty' && <CanvasEmpty />}
+            {/* canvas.kind === 'empty' 在 canvasVisible=false 时整个 aside 不渲染，这里不再判 */}
             {canvas.kind === 'jd-draft' && <JDDraft data={canvas.data} />}
             {canvas.kind === 'match-list' && <Recommendation data={canvas.data} />}
             {canvas.kind === 'pipeline-report' && <Report data={canvas.data} />}
@@ -674,6 +786,7 @@ export function ChatStream({ jobs, initialPrompt }: { jobs: Job[]; initialPrompt
           </div>
         </div>
       </aside>
+      )}
     </div>
   );
 }

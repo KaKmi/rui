@@ -4,10 +4,10 @@ import {
   ArrowLeft,
   PenLine,
   Copy,
-  Pause,
   Send,
   Chevron,
 } from '@/components/icons/Icon';
+import { JobStatusControl } from './JobStatusControl.client';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
 import { Chip } from '@/components/ui/Chip';
@@ -58,16 +58,14 @@ export default async function JobDetailPage({ params }: { params: { id: string }
           <Badge variant={STATUS_VARIANT[job.status]}>{job.status}</Badge>
         </div>
         <div className="page-actions">
-          <button type="button" className="btn btn-sm">
+          <button type="button" className="btn btn-sm" disabled title="编辑功能 M4 待接入">
             <PenLine size={12} /> 编辑
           </button>
-          <button type="button" className="btn btn-sm">
+          <button type="button" className="btn btn-sm" disabled title="复制功能 M4 待接入">
             <Copy size={12} /> 复制 JD
           </button>
-          <button type="button" className="btn btn-sm">
-            <Pause size={12} /> 暂停
-          </button>
-          <Link className="btn btn-primary btn-sm" href="/chat">
+          <JobStatusControl jobId={job.id} status={job.status} />
+          <Link className="btn btn-sm" href="/chat">
             <Send size={12} /> 在对话中改 JD
           </Link>
         </div>

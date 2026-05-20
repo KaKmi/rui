@@ -2,7 +2,6 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
   ArrowLeft,
-  Send,
   Check,
   X,
   Sparkle,
@@ -13,6 +12,7 @@ import {
   Building,
   Calendar,
 } from '@/components/icons/Icon';
+import { ResumeActions } from './ResumeActions.client';
 import { BarScore } from '@/components/ui/BarScore';
 import { Card } from '@/components/ui/Card';
 import { Chip } from '@/components/ui/Chip';
@@ -37,9 +37,6 @@ export default async function ResumeDetailPage({ params }: { params: { id: strin
   const fullName = resume.name?.trim() || `候选人 ${resume.id}`;
   const displayName = truncateText(fullName, 8);
   const displaySummary = truncateText(resume.summary, 60, '暂无 AI 摘要');
-  const profileMeta = [resume.gender, resume.age == null ? null : `${resume.age} 岁`]
-    .filter(Boolean)
-    .join(' · ');
   const skillView = compactList(resume.skills, 8);
 
   return (
@@ -57,18 +54,18 @@ export default async function ResumeDetailPage({ params }: { params: { id: strin
           </div>
         </div>
         <div className="page-actions">
-          <button type="button" className="btn btn-sm">
-            <X size={12} /> 不合适
-          </button>
           <Link
             className="btn btn-sm"
             href={`/chat?resumeId=${encodeURIComponent(resume.id)}&intent=suggest_questions`}
           >
             <Sparkle size={12} /> 在对话中讨论
           </Link>
-          <button type="button" className="btn btn-primary btn-sm">
-            <Send size={12} /> 邀请面试
-          </button>
+          <ResumeActions
+            resumeId={resume.id}
+            name={fullName}
+            status={resume.status}
+            canRescore={Boolean(row.parsedText?.trim())}
+          />
         </div>
       </div>
 
@@ -80,7 +77,6 @@ export default async function ResumeDetailPage({ params }: { params: { id: strin
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <span className="resume-name" title={fullName}>{displayName}</span>
               {resume.score !== null && <Chip variant="neon">{verdictOfScore(resume.score)}</Chip>}
-              <Chip variant="muted">{profileMeta || '基础信息待识别'}</Chip>
             </div>
             <div className="resume-contact" style={{ marginTop: 6 }}>
               <span>

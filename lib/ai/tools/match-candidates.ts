@@ -21,13 +21,20 @@ export const matchCandidates = tool({
     const [job, rows] = await Promise.all([
       prisma.job.findUnique({ where: { id: jobId } }),
       prisma.resume.findMany({
-        where: { appliedForId: jobId },
+        // 只取已评分的：未评分的字段都是 null，进列表会显示成一排"待识别"
+        where: { appliedForId: jobId, status: 'AI 已评分', score: { not: null } },
         orderBy: [{ score: 'desc' }, { createdAt: 'desc' }],
         take: topK,
       }),
     ]);
     if (!job) {
       return { kind: 'error' as const, message: `找不到 JD ${jobId}` };
+    }
+    if (rows.length === 0) {
+      return {
+        kind: 'error' as const,
+        message: `JD ${jobId} 还没有已评分的候选人。先批量上传 + 评分后再来推荐。`,
+      };
     }
     return {
       kind: 'match-list' as const,

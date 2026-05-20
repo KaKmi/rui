@@ -30,6 +30,20 @@ type UploadItem = {
   error?: string;
 };
 
+type UploadStage = 'queued' | 'parsing' | 'ocr' | 'uploading' | 'saving' | 'done' | 'failed';
+
+type UploadEvent =
+  | { type: 'start'; jobId: string; total: number; fileNames: string[] }
+  | { type: 'file-stage'; index: number; name: string; stage: UploadStage }
+  | { type: 'file-done'; index: number; item: UploadItem }
+  | {
+      type: 'done';
+      jobId: string;
+      taskId: string;
+      items: UploadItem[];
+      summary: { total: number; ok: number; failed: number };
+    };
+
 /**
  * 生成 R-{base36 时间戳后 6 位 + 4 位随机} 业务 ID。
  * 跟 mock data 的 R-9821 形态对齐；并发碰撞概率 ~1/2^36，简历池不会撞。
@@ -116,48 +130,78 @@ export const POST = withApiLog('POST /api/resumes/upload', async (req) => {
     fileNames: files.map((f) => f.name),
   });
 
-  // 4) 串行处理：pdf-parse v2 内部用 pdfjs-dist 在 Node 端没有可靠的多实例并发，
-  //    并发跑会让请求 pending 不返回。一次一个最稳。
-  const items: UploadItem[] = [];
-  for (let i = 0; i < files.length; i += 1) {
-    const file = files[i]!;
-    log.info('upload/file-begin', { index: i + 1, total: files.length, name: file.name });
-    const t0 = Date.now();
-    try {
-      items.push(await handleFile(file, jobId));
-    } catch (e) {
-      const err = e instanceof Error ? e.message : String(e);
-      log.error('upload/file-crash', { index: i + 1, name: file.name, err });
-      items.push({
-        id: '',
-        fileName: file.name,
-        size: file.size,
-        status: '解析失败',
-        error: `内部错误：${err}`,
+  // 4) 串行处理 + NDJSON 流式推回，让前端逐文件看到 parsing → ocr → uploading → saving → done
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const send = (ev: UploadEvent) => {
+        controller.enqueue(encoder.encode(`${JSON.stringify(ev)}\n`));
+      };
+      send({
+        type: 'start',
+        jobId,
+        total: files.length,
+        fileNames: files.map((f) => f.name),
       });
-    }
-    log.info('upload/file-end', {
-      index: i + 1,
-      name: file.name,
-      ms: Date.now() - t0,
-    });
-  }
 
-  log.info('upload/done', {
-    jobId,
-    total: items.length,
-    ok: items.filter((i) => i.status === '待评分').length,
-    failed: items.filter((i) => i.status === '解析失败').length,
+      const items: UploadItem[] = [];
+      for (let i = 0; i < files.length; i += 1) {
+        const file = files[i]!;
+        const index = i + 1;
+        log.info('upload/file-begin', { index, total: files.length, name: file.name });
+        const t0 = Date.now();
+        const onStage = (stage: UploadStage) =>
+          send({ type: 'file-stage', index, name: file.name, stage });
+        onStage('queued');
+
+        let item: UploadItem;
+        try {
+          item = await handleFile(file, jobId, onStage);
+        } catch (e) {
+          const err = e instanceof Error ? e.message : String(e);
+          log.error('upload/file-crash', { index, name: file.name, err });
+          item = {
+            id: '',
+            fileName: file.name,
+            size: file.size,
+            status: '解析失败',
+            error: `内部错误：${err}`,
+          };
+        }
+        items.push(item);
+        onStage(item.status === '待评分' ? 'done' : 'failed');
+        send({ type: 'file-done', index, item });
+        log.info('upload/file-end', { index, name: file.name, ms: Date.now() - t0 });
+      }
+
+      const ok = items.filter((i) => i.status === '待评分').length;
+      const failed = items.length - ok;
+      log.info('upload/done', { jobId, total: items.length, ok, failed });
+      send({
+        type: 'done',
+        jobId,
+        taskId: newTaskId(),
+        items,
+        summary: { total: items.length, ok, failed },
+      });
+      controller.close();
+    },
   });
 
-  return NextResponse.json({
-    jobId,
-    taskId: newTaskId(),
-    items,
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'application/x-ndjson; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      'X-Accel-Buffering': 'no',
+    },
   });
 });
 
-async function handleFile(file: File, jobId: string): Promise<UploadItem> {
+async function handleFile(
+  file: File,
+  jobId: string,
+  onStage: (stage: UploadStage) => void,
+): Promise<UploadItem> {
   const fileName = file.name;
   const size = file.size;
   const mime = file.type || null;
@@ -191,7 +235,10 @@ async function handleFile(file: File, jobId: string): Promise<UploadItem> {
   const buffer = Buffer.from(arrayBuffer);
 
   // 先解析文本。解析失败不入库，也不上传 Blob，避免产生不可评分的 Resume 记录。
-  const parsed = await parseResume(buffer, mime, fileName);
+  // parseResume 内部进 PDF 时会先 emit 'parsing'；走 OCR 时会 emit 'ocr'。
+  const parsed = await parseResume(buffer, mime, fileName, (s) => {
+    onStage(s === 'ocr' ? 'ocr' : 'parsing');
+  });
   if (!parsed.ok) {
     log.warn('upload/parse-fail', { resumeId, fileName, err: parsed.error });
     return { id: '', fileName, size, status: '解析失败', error: parsed.error };
@@ -207,6 +254,7 @@ async function handleFile(file: File, jobId: string): Promise<UploadItem> {
   });
 
   // 上传到 Blob：resumes/{jobId}/{resumeId}-{filename}
+  onStage('uploading');
   let blobUrl: string;
   try {
     // 简历含 PII，用 private 访问：put 返回的 URL 是内部标识，
@@ -222,6 +270,7 @@ async function handleFile(file: File, jobId: string): Promise<UploadItem> {
     return { id: '', fileName, size, status: '解析失败', error: `上传到 Blob 失败：${msg}` };
   }
 
+  onStage('saving');
   await prisma.resume.create({
     data: {
       id: resumeId,

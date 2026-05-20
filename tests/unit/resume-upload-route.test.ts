@@ -54,6 +54,35 @@ function uploadRequest(fileOrFiles: File | File[]): Request {
   } as unknown as Request;
 }
 
+type UploadDoneEvent = {
+  type: 'done';
+  jobId: string;
+  taskId: string;
+  items: Array<{
+    id: string;
+    fileName: string;
+    status: '待评分' | '解析失败';
+    blobUrl?: string;
+    error?: string;
+  }>;
+};
+
+/** 服务端从 JSON 改成 NDJSON 流后，把响应里的 `done` 事件还原成原来的 { items } 形态。 */
+async function readUploadStream(
+  res: Response,
+): Promise<{ jobId: string; taskId: string; items: UploadDoneEvent['items'] }> {
+  const text = await res.text();
+  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    const ev = JSON.parse(line);
+    if (ev?.type === 'done') {
+      const d = ev as UploadDoneEvent;
+      return { jobId: d.jobId, taskId: d.taskId, items: d.items };
+    }
+  }
+  throw new Error('没收到 done 事件');
+}
+
 describe('POST /api/resumes/upload', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -66,7 +95,7 @@ describe('POST /api/resumes/upload', () => {
     mocks.parseResume.mockResolvedValue({ ok: false, error: 'PDF 文本质量过低' });
 
     const res = await POST(uploadRequest(new File(['bad pdf'], 'bad.pdf', { type: 'application/pdf' })), undefined);
-    const body = await res.json();
+    const body = await readUploadStream(res);
 
     expect(res.status).toBe(200);
     expect(body.items).toHaveLength(1);
@@ -90,7 +119,7 @@ describe('POST /api/resumes/upload', () => {
     mocks.put.mockResolvedValue({ url: 'https://blob.example/resume.pdf' });
 
     const res = await POST(uploadRequest(new File(['good pdf'], 'good.pdf', { type: 'application/pdf' })), undefined);
-    const body = await res.json();
+    const body = await readUploadStream(res);
 
     expect(res.status).toBe(200);
     expect(body.items[0]).toMatchObject({
@@ -98,11 +127,12 @@ describe('POST /api/resumes/upload', () => {
       status: '待评分',
       blobUrl: 'https://blob.example/resume.pdf',
     });
-    expect(body.items[0].id).toMatch(/^R-/);
+    const goodItem = body.items[0]!;
+    expect(goodItem.id).toMatch(/^R-/);
     expect(mocks.put).toHaveBeenCalledOnce();
     expect(mocks.resumeCreate).toHaveBeenCalledWith({
       data: expect.objectContaining({
-        id: body.items[0].id,
+        id: goodItem.id,
         status: '待评分',
         appliedForId: 'J-1',
         originalFileUrl: 'https://blob.example/resume.pdf',
@@ -131,7 +161,7 @@ describe('POST /api/resumes/upload', () => {
       ]),
       undefined,
     );
-    const body = await res.json();
+    const body = await readUploadStream(res);
 
     expect(res.status).toBe(200);
     expect(body.items).toHaveLength(2);
@@ -145,9 +175,10 @@ describe('POST /api/resumes/upload', () => {
       status: '待评分',
       blobUrl: 'https://blob.example/resume-2.pdf',
     });
-    expect(body.items[0].id).toMatch(/^R-/);
-    expect(body.items[1].id).toMatch(/^R-/);
-    expect(body.items[0].id).not.toBe(body.items[1].id);
+    const [first, second] = body.items;
+    expect(first?.id).toMatch(/^R-/);
+    expect(second?.id).toMatch(/^R-/);
+    expect(first?.id).not.toBe(second?.id);
     expect(mocks.put).toHaveBeenCalledTimes(2);
     expect(mocks.resumeCreate).toHaveBeenCalledTimes(2);
   });

@@ -39,7 +39,13 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
  *    这里 fire-and-forget，避免阻塞下一份 PDF 的解析（serial 批量场景的真正 bug 源）。
  *  - getText() 自身也加 20s 超时，避免某个坏 PDF 卡死整个批次。
  */
-export async function parsePdf(buffer: Buffer): Promise<ParseResult> {
+export type ParseStage = 'parsing' | 'ocr';
+
+export async function parsePdf(
+  buffer: Buffer,
+  onStage?: (stage: ParseStage) => void,
+): Promise<ParseResult> {
+  onStage?.('parsing');
   const parser = new PDFParse({ data: new Uint8Array(buffer) });
   let pageCount = 0;
   try {
@@ -71,9 +77,10 @@ export async function parsePdf(buffer: Buffer): Promise<ParseResult> {
   }
 
   // —— OCR 降级路径 ——
+  onStage?.('ocr');
   try {
     const ocrText = cleanExtractedText(
-      await withTimeout(ocrPdfBuffer(buffer), OCR_TIMEOUT_MS, 'OCR 识别'),
+      await withTimeout(ocrPdfBuffer(buffer, pageCount), OCR_TIMEOUT_MS, 'OCR 识别'),
     );
     const ocrQuality = assessTextQuality(ocrText);
     const ocrError = textQualityError('PDF', ocrQuality);
