@@ -12,7 +12,7 @@ import {
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+export const maxDuration = 300; // OCR 单页中文识别 3-8s，10 页 + 多文件串行可能逼近 60s 上限
 
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB，对齐 Vercel Hobby body 4.5MB + 余量
 const MAX_FILES_PER_REQUEST = 10;
@@ -60,6 +60,16 @@ function formatAppliedAt(d: Date): string {
   return `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hh}:${mm}`;
 }
 
+function isUploadFile(value: FormDataEntryValue): value is File {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    'arrayBuffer' in value &&
+    'name' in value &&
+    'size' in value
+  );
+}
+
 export const POST = withApiLog('POST /api/resumes/upload', async (req) => {
   // 1) 校验 jobId 在 query
   const url = new URL(req.url);
@@ -89,7 +99,7 @@ export const POST = withApiLog('POST /api/resumes/upload', async (req) => {
     );
   }
 
-  const files = form.getAll('files').filter((v): v is File => v instanceof File);
+  const files = form.getAll('files').filter(isUploadFile);
   if (files.length === 0) {
     return NextResponse.json({ error: '没有上传文件（字段名应为 "files"）' }, { status: 400 });
   }
@@ -100,10 +110,38 @@ export const POST = withApiLog('POST /api/resumes/upload', async (req) => {
     );
   }
 
-  log.info('upload/start', { jobId, fileCount: files.length });
+  log.info('upload/start', {
+    jobId,
+    fileCount: files.length,
+    fileNames: files.map((f) => f.name),
+  });
 
-  // 4) 逐个处理（并发 3 路）
-  const items: UploadItem[] = await runConcurrent(files, 3, (file) => handleFile(file, jobId));
+  // 4) 串行处理：pdf-parse v2 内部用 pdfjs-dist 在 Node 端没有可靠的多实例并发，
+  //    并发跑会让请求 pending 不返回。一次一个最稳。
+  const items: UploadItem[] = [];
+  for (let i = 0; i < files.length; i += 1) {
+    const file = files[i]!;
+    log.info('upload/file-begin', { index: i + 1, total: files.length, name: file.name });
+    const t0 = Date.now();
+    try {
+      items.push(await handleFile(file, jobId));
+    } catch (e) {
+      const err = e instanceof Error ? e.message : String(e);
+      log.error('upload/file-crash', { index: i + 1, name: file.name, err });
+      items.push({
+        id: '',
+        fileName: file.name,
+        size: file.size,
+        status: '解析失败',
+        error: `内部错误：${err}`,
+      });
+    }
+    log.info('upload/file-end', {
+      index: i + 1,
+      name: file.name,
+      ms: Date.now() - t0,
+    });
+  }
 
   log.info('upload/done', {
     jobId,
@@ -129,7 +167,7 @@ async function handleFile(file: File, jobId: string): Promise<UploadItem> {
   if (size > MAX_FILE_SIZE) {
     log.warn('upload/oversize', { resumeId, fileName, size });
     return {
-      id: resumeId,
+      id: '',
       fileName,
       size,
       status: '解析失败',
@@ -141,7 +179,7 @@ async function handleFile(file: File, jobId: string): Promise<UploadItem> {
   if (!isAcceptedMime(mime) && !isAcceptedByName(fileName)) {
     log.warn('upload/bad-mime', { resumeId, fileName, mime });
     return {
-      id: resumeId,
+      id: '',
       fileName,
       size,
       status: '解析失败',
@@ -151,6 +189,22 @@ async function handleFile(file: File, jobId: string): Promise<UploadItem> {
 
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
+
+  // 先解析文本。解析失败不入库，也不上传 Blob，避免产生不可评分的 Resume 记录。
+  const parsed = await parseResume(buffer, mime, fileName);
+  if (!parsed.ok) {
+    log.warn('upload/parse-fail', { resumeId, fileName, err: parsed.error });
+    return { id: '', fileName, size, status: '解析失败', error: parsed.error };
+  }
+
+  log.info('upload/parsed', {
+    resumeId,
+    fileName,
+    pages: parsed.pageCount,
+    textLen: parsed.text.length,
+    quality: parsed.quality,
+    ocrUsed: parsed.ocrUsed === true,
+  });
 
   // 上传到 Blob：resumes/{jobId}/{resumeId}-{filename}
   let blobUrl: string;
@@ -165,67 +219,30 @@ async function handleFile(file: File, jobId: string): Promise<UploadItem> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     log.error('upload/blob-fail', { resumeId, fileName, err: msg });
-    return { id: resumeId, fileName, size, status: '解析失败', error: `上传到 Blob 失败：${msg}` };
+    return { id: '', fileName, size, status: '解析失败', error: `上传到 Blob 失败：${msg}` };
   }
 
-  // 解析文本
-  const parsed = await parseResume(buffer, mime, fileName);
-
-  const status: UploadItem['status'] = parsed.ok ? '待评分' : '解析失败';
   await prisma.resume.create({
     data: {
       id: resumeId,
-      status,
+      status: '待评分',
       appliedForId: jobId,
       appliedAt: formatAppliedAt(new Date()),
       originalFileUrl: blobUrl,
       originalFileName: fileName,
       originalFileSize: size,
       originalMimeType: mime,
-      parsedText: parsed.ok ? parsed.text : null,
-      parseError: parsed.ok ? null : parsed.error,
+      parsedText: parsed.text,
+      parseError: null,
     },
   });
-
-  if (!parsed.ok) {
-    log.warn('upload/parse-fail', { resumeId, fileName, err: parsed.error });
-  } else {
-    log.info('upload/parsed', {
-      resumeId,
-      fileName,
-      pages: parsed.pageCount,
-      textLen: parsed.text.length,
-      quality: parsed.quality,
-    });
-  }
 
   return {
     id: resumeId,
     fileName,
     size,
-    status,
+    status: '待评分',
     blobUrl,
-    error: parsed.ok ? undefined : parsed.error,
   };
 }
 
-/** 简单并发限流：每次启动 limit 个，跑完一个补一个 */
-async function runConcurrent<T, R>(
-  items: T[],
-  limit: number,
-  worker: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const results: R[] = new Array(items.length);
-  let cursor = 0;
-  async function next(): Promise<void> {
-    const i = cursor++;
-    if (i >= items.length) return;
-    const item = items[i];
-    if (item !== undefined) {
-      results[i] = await worker(item);
-    }
-    await next();
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, next));
-  return results;
-}

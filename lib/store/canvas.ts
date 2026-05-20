@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import type { JDDraftData } from '@/app/chat/canvas/JDDraft';
 import type { MatchListData } from '@/app/chat/canvas/Recommendation';
 import type { PipelineReportData } from '@/app/chat/canvas/Report';
+import type { QuestionSetData } from '@/app/chat/canvas/QuestionSet';
 import type { ResumeResultsData } from '@/app/chat/canvas/ResumeScan.client';
 
 /**
@@ -23,7 +24,8 @@ export type CanvasState =
   | { kind: 'resume-scan'; taskId: string; resumeIds: string[]; jobId?: string }
   | { kind: 'resume-results'; data: ResumeResultsData }
   | { kind: 'match-list'; data: MatchListData }
-  | { kind: 'pipeline-report'; data: PipelineReportData };
+  | { kind: 'pipeline-report'; data: PipelineReportData }
+  | { kind: 'question-set'; data: QuestionSetData };
 
 export type CanvasKind = CanvasState['kind'];
 
@@ -57,5 +59,7 @@ export function canvasTitle(state: CanvasState): string {
       return '候选人智能推荐';
     case 'pipeline-report':
       return '招聘漏斗 · 当前';
+    case 'question-set':
+      return '面试追问清单';
   }
 }

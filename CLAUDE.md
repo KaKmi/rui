@@ -196,7 +196,11 @@ _本文档与 spec.md / tech-plan.md / milestones.md 同步演化；任一变更
 - 批量评分入口是 `GET /api/resumes/scan/[taskId]?resumeIds=...`，返回 SSE；前端由 `ResumeScan.client.tsx` 监听进度，完成后切到 `resume-results` 画布。
 - 上传成功后，`ResumeUpload.client.tsx` 会把本批 `待评分` 的 resume ID 传给 `resume-scan`，不需要用户再手动触发评分。
 - 调 LLM 前必须经过 `lib/ai/pii.ts`：手机号、邮箱、身份证、URL、疑似姓名和敏感画像行会被替换；日志禁止打印原始简历正文。
-- PDF/DOCX 抽取文本必须经过 `lib/parsers/text-quality.ts` 清洗和质量判断；文本太少、乱码、重复率异常时标记为 `解析失败`，不要进入评分。
+- PDF/DOCX 抽取文本必须经过 `lib/parsers/text-quality.ts` 清洗和质量判断；文本太少、乱码、重复率异常时返回 `解析失败`，不要上传 Blob、不要入库、不要进入评分。
 - MiMo 结构化输出要按“宽 schema、严 normalize”处理：允许数字字符串、缺失可选字段和偏长摘要，入库前统一 coercion、null fallback、截断。
 - 评分结果落库字段包括 `status='AI 已评分'`、`score`、五维 `breakdown`、`summary`、`pros`、`cons`、`interview`、`skills`、`workHistory` 以及可识别的岗位相关基础信息。
 - 评分日志使用 `score/start`、`score/finish`、`scan/start`、`scan/done`；`score/finish` 可打印结构化模型输出，但不得包含原始 PII。
+- M3.3 简历详情联动：`/resumes/[id]` 的“在对话中讨论”跳到 `/chat?resumeId=...&intent=suggest_questions`，`ChatStream` 自动触发一次 `suggest_questions`，右侧画布渲染 `question-set`。
+- 展示层长文本统一走 `lib/display.ts`：姓名默认 8 字截断、摘要默认 60 字截断、技能标签显示前 8 个并用 `+N` 折叠。
+- `/api/chat` 入口使用 `lib/ai/chat-routing.ts` 做确定性工具路由：明确 JD ID + 匹配/排序意图时强制 `match_candidates`，明确简历 ID + 追问/评分意图时强制 `suggest_questions` / `score_resume`，避免模型直接编结果。
+- 面向用户展示职位统一使用 `formatJobLabel()` 的“岗位名（JD-xxxx）”形式，避免只露出裸 JD 编号。

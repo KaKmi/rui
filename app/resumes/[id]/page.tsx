@@ -19,6 +19,7 @@ import { Chip } from '@/components/ui/Chip';
 import { ScoreRing } from '@/components/ui/ScoreRing';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { prisma } from '@/lib/db';
+import { compactList, truncateText } from '@/lib/display';
 import { toJobDTO, toResumeDTO } from '@/lib/dto';
 import { verdictOfScore } from '@/lib/score-tone';
 
@@ -33,6 +34,13 @@ export default async function ResumeDetailPage({ params }: { params: { id: strin
 
   const resume = toResumeDTO(row);
   const job = toJobDTO(row.appliedFor);
+  const fullName = resume.name?.trim() || `候选人 ${resume.id}`;
+  const displayName = truncateText(fullName, 8);
+  const displaySummary = truncateText(resume.summary, 60, '暂无 AI 摘要');
+  const profileMeta = [resume.gender, resume.age == null ? null : `${resume.age} 岁`]
+    .filter(Boolean)
+    .join(' · ');
+  const skillView = compactList(resume.skills, 8);
 
   return (
     <div className="page">
@@ -45,14 +53,17 @@ export default async function ResumeDetailPage({ params }: { params: { id: strin
             <div className="page-crumb">
               简历池 / {resume.id} · 投递 {job.id}
             </div>
-            <div className="page-title">{resume.name}</div>
+            <div className="page-title" title={fullName}>{displayName}</div>
           </div>
         </div>
         <div className="page-actions">
           <button type="button" className="btn btn-sm">
             <X size={12} /> 不合适
           </button>
-          <Link className="btn btn-sm" href="/chat">
+          <Link
+            className="btn btn-sm"
+            href={`/chat?resumeId=${encodeURIComponent(resume.id)}&intent=suggest_questions`}
+          >
             <Sparkle size={12} /> 在对话中讨论
           </Link>
           <button type="button" className="btn btn-primary btn-sm">
@@ -67,21 +78,20 @@ export default async function ResumeDetailPage({ params }: { params: { id: strin
           <ScoreRing value={resume.score} size={76} stroke={6} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-              <span className="resume-name">{resume.name}</span>
+              <span className="resume-name" title={fullName}>{displayName}</span>
               {resume.score !== null && <Chip variant="neon">{verdictOfScore(resume.score)}</Chip>}
-              <Chip variant="muted">
-                {resume.gender} · {resume.age} 岁
-              </Chip>
+              <Chip variant="muted">{profileMeta || '基础信息待识别'}</Chip>
             </div>
             <div className="resume-contact" style={{ marginTop: 6 }}>
               <span>
-                <Building size={11} /> {resume.current}
+                <Building size={11} /> {resume.current ?? '当前公司待识别'}
               </span>
               <span>
-                <GraduationCap size={11} /> {resume.edu}
+                <GraduationCap size={11} /> {resume.edu ?? '教育经历待识别'}
               </span>
               <span>
-                <Map size={11} /> {resume.location} · 期望 {resume.expected} · {resume.yoe} 年经验
+                <Map size={11} /> {resume.location ?? '地点待识别'} · 期望 {resume.expected ?? '待识别'} ·{' '}
+                {resume.yoe == null ? '年限待识别' : `${resume.yoe} 年经验`}
               </span>
             </div>
           </div>
@@ -95,7 +105,7 @@ export default async function ResumeDetailPage({ params }: { params: { id: strin
             <SectionTitle>AI 综合摘要</SectionTitle>
             <div className="ai-summary">
               <Sparkle size={14} style={{ color: 'var(--neon-1)', flex: 'none', marginTop: 2 }} />
-              <span>{resume.summary}</span>
+              <span title={resume.summary ?? undefined}>{displaySummary}</span>
             </div>
 
             {(resume.pros.length > 0 || resume.cons.length > 0) && (
@@ -185,11 +195,12 @@ export default async function ResumeDetailPage({ params }: { params: { id: strin
             <Card pad>
               <SectionTitle>技能标签</SectionTitle>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {resume.skills.map((s) => (
+                {skillView.visible.map((s) => (
                   <Chip key={s} variant="cyan">
                     {s}
                   </Chip>
                 ))}
+                {skillView.hidden > 0 && <Chip variant="muted">+{skillView.hidden}</Chip>}
               </div>
             </Card>
           )}

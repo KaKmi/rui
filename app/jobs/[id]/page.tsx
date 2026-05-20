@@ -6,7 +6,6 @@ import {
   Copy,
   Pause,
   Send,
-  Sparkle,
   Chevron,
 } from '@/components/icons/Icon';
 import { Badge } from '@/components/ui/Badge';
@@ -16,6 +15,7 @@ import { KV } from '@/components/ui/KV';
 import { ScoreRing } from '@/components/ui/ScoreRing';
 import { SectionTitle } from '@/components/ui/SectionTitle';
 import { prisma } from '@/lib/db';
+import { formatJobLabel } from '@/lib/display';
 import { toJobDTO, toResumeDTO } from '@/lib/dto';
 import { badgeVariantOfScore, verdictOfScore } from '@/lib/score-tone';
 import type { JobStatus } from '@/types';
@@ -52,7 +52,7 @@ export default async function JobDetailPage({ params }: { params: { id: string }
             <ArrowLeft size={13} />
           </Link>
           <div>
-            <div className="page-crumb">职位管理 / {job.id}</div>
+            <div className="page-crumb">职位管理 / {formatJobLabel(job, { maxTitle: 12 })}</div>
             <div className="page-title">{job.title}</div>
           </div>
           <Badge variant={STATUS_VARIANT[job.status]}>{job.status}</Badge>
@@ -144,7 +144,7 @@ export default async function JobDetailPage({ params }: { params: { id: string }
           )}
         </Card>
 
-        {/* 右 1/3 : 漏斗 + Top 候选人 + AI 建议 */}
+        {/* 右 1/3 : 漏斗 + Top 候选人 */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--s-4)' }}>
           <Card pad>
             <SectionTitle>招聘漏斗</SectionTitle>
@@ -195,18 +195,6 @@ export default async function JobDetailPage({ params }: { params: { id: string }
                 ))}
               </div>
             )}
-          </Card>
-
-          <Card pad className="ai-tips">
-            <SectionTitle hint="Rui 给的建议">AI 建议</SectionTitle>
-            <div className="tip-row">
-              <Sparkle size={13} style={{ color: 'var(--neon-1)' }} />
-              <span>当前简历池 Top 3 评分均 ≥85，可优先安排首面。</span>
-            </div>
-            <div className="tip-row">
-              <Sparkle size={13} style={{ color: 'var(--neon-1)' }} />
-              <span>该岗位「微前端」硬性要求较窄，可考虑放宽，简历池可扩大 ~40%。</span>
-            </div>
           </Card>
         </div>
       </div>

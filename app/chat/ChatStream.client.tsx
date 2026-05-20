@@ -16,6 +16,7 @@ import {
 import { Markdown } from './canvas/Markdown';
 import { CanvasEmpty } from './canvas/CanvasEmpty';
 import { JDDraft, type JDDraftData } from './canvas/JDDraft';
+import { QuestionSet, type QuestionSetData } from './canvas/QuestionSet';
 import { Recommendation, type MatchListData } from './canvas/Recommendation';
 import { Report, type PipelineReportData } from './canvas/Report';
 import {
@@ -25,6 +26,7 @@ import {
 } from './canvas/ResumeScan.client';
 import { ResumeUpload } from './canvas/ResumeUpload.client';
 import { useCanvas, canvasTitle, type CanvasState } from '@/lib/store/canvas';
+import { formatJobLabel } from '@/lib/display';
 import type { Job } from '@/types';
 import {
   AskRole,
@@ -45,12 +47,13 @@ type QuickPrompt =
   | { kind: 'send'; icon: typeof Briefcase; text: string }
   | { kind: 'open-upload'; icon: typeof Upload; text: string };
 
-const QUICK_PROMPTS: QuickPrompt[] = [
-  { kind: 'send', icon: Briefcase, text: '我想起草一份新 JD。' },
-  { kind: 'send', icon: Users, text: '把 JD-2024-0118 的候选人按匹配度排个序，给我 top 5。' },
-  { kind: 'send', icon: TrendingUp, text: '汇总一下当前招聘漏斗，给我 3 条关键洞察。' },
-  { kind: 'open-upload', icon: Upload, text: '上传一批新简历' },
-];
+type SuggestedAction = { icon: typeof Briefcase; text: string; prompt?: string };
+
+type JobPickerState = {
+  messageId: string;
+  sourceText: string;
+  topK: number;
+};
 
 const HITL_TOOL_NAMES = new Set([
   'ask_role',
@@ -60,6 +63,70 @@ const HITL_TOOL_NAMES = new Set([
   'ask_skills',
   'ask_headcount',
 ]);
+
+const JD_ID_RE = /\bJD-\d{4}-\d{4}\b/i;
+
+function makeLocalMessageId(prefix: string) {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return `${prefix}-${crypto.randomUUID()}`;
+  }
+  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function parseTopK(text: string) {
+  const match = text.match(/\btop\s*(\d{1,2})\b/i) ?? text.match(/前\s*(\d{1,2})\s*(?:个|位|名)?/);
+  const value = match?.[1] ? Number.parseInt(match[1], 10) : 5;
+  if (!Number.isFinite(value)) return 5;
+  return Math.max(1, Math.min(20, value));
+}
+
+function shouldAskForJobBeforeMatching(text: string) {
+  const normalized = text.trim();
+  if (!normalized || JD_ID_RE.test(normalized)) return false;
+  if (/(追问|面试|讨论|聊聊|问什么|问题)/.test(normalized)) return false;
+  return /(候选人|简历|匹配|推荐|排序|排行|排名|top|Top|TOP)/.test(normalized);
+}
+
+function buildAssistantSuggestions(canvas: CanvasState): SuggestedAction[] {
+  if (canvas.kind === 'match-list') {
+    const firstCandidate = canvas.data.candidates[0];
+    return [
+      {
+        icon: Users,
+        text: '基于这位候选人，生成一组面试追问。',
+        prompt: firstCandidate
+          ? `围绕简历 ${firstCandidate.id} 生成面试追问。`
+          : '生成一组面试追问。',
+      },
+      { icon: TrendingUp, text: '汇总一下当前招聘漏斗，给我 3 条关键洞察。' },
+      { icon: Upload, text: '我要上传一批新简历。' },
+    ];
+  }
+  if (canvas.kind === 'pipeline-report') {
+    return [
+      { icon: Users, text: '把候选人按匹配度排个序，给我 top 5。' },
+      { icon: Briefcase, text: '我想起草一份新 JD。' },
+      { icon: Upload, text: '我要上传一批新简历。' },
+    ];
+  }
+  return [
+    { icon: Users, text: '把候选人按匹配度排个序，给我 top 5。' },
+    { icon: TrendingUp, text: '汇总一下当前招聘漏斗，给我 3 条关键洞察。' },
+    { icon: Briefcase, text: '我想起草一份新 JD。' },
+  ];
+}
+
+function contextualPrompt(text: string, canvas: CanvasState) {
+  const normalized = text.trim();
+  if (
+    canvas.kind === 'match-list' &&
+    /(追问|面试|讨论|聊聊|问什么|问题)/.test(normalized)
+  ) {
+    const firstCandidate = canvas.data.candidates[0];
+    if (firstCandidate) return `围绕简历 ${firstCandidate.id} 生成面试追问。`;
+  }
+  return normalized;
+}
 
 /** 在最近的 assistant 消息里找一个 server-tool 的 output，决定画布 */
 function latestCanvasOutput(messages: UIMessage[]): { kind: string; payload: unknown } | null {
@@ -178,7 +245,7 @@ function renderMessagePart(
   );
 }
 
-export function ChatStream({ jobs }: { jobs: Job[] }) {
+export function ChatStream({ jobs, initialPrompt }: { jobs: Job[]; initialPrompt?: string }) {
   /**
    * sendAutomaticallyWhen: HITL 工具 addToolResult 后自动续流。
    * 用 ref 守门：在 submit() 取消挂起 tool 时临时关掉自动续流，
@@ -194,6 +261,8 @@ export function ChatStream({ jobs }: { jobs: Job[] }) {
       },
     });
   const [input, setInput] = React.useState('');
+  const [pendingAssistant, setPendingAssistant] = React.useState(false);
+  const [jobPickers, setJobPickers] = React.useState<JobPickerState[]>([]);
   const scrollRef = React.useRef<HTMLDivElement | null>(null);
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
 
@@ -202,6 +271,14 @@ export function ChatStream({ jobs }: { jobs: Job[] }) {
   const resetCanvas = useCanvas((s) => s.reset);
 
   const busy = status === 'streaming' || status === 'submitted';
+  const quickPrompts = React.useMemo<QuickPrompt[]>(() => {
+    return [
+      { kind: 'send', icon: Briefcase, text: '我想起草一份新 JD。' },
+      { kind: 'send', icon: Users, text: '把候选人按匹配度排个序，给我 top 5。' },
+      { kind: 'send', icon: TrendingUp, text: '汇总一下当前招聘漏斗，给我 3 条关键洞察。' },
+      { kind: 'open-upload', icon: Upload, text: '上传一批新简历' },
+    ];
+  }, []);
 
   // 工具结果到达 → 写入 canvas store
   React.useEffect(() => {
@@ -212,6 +289,7 @@ export function ChatStream({ jobs }: { jobs: Job[] }) {
     else if (latest.kind === 'match-list') next = { kind: 'match-list', data: latest.payload as MatchListData };
     else if (latest.kind === 'pipeline-report') next = { kind: 'pipeline-report', data: latest.payload as PipelineReportData };
     else if (latest.kind === 'resume-results') next = { kind: 'resume-results', data: latest.payload as ResumeResultsData };
+    else if (latest.kind === 'question-set') next = { kind: 'question-set', data: latest.payload as QuestionSetData };
     if (next) setCanvas(next);
   }, [messages, setCanvas]);
 
@@ -219,7 +297,15 @@ export function ChatStream({ jobs }: { jobs: Job[] }) {
   React.useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, status]);
+  }, [messages, status, pendingAssistant, jobPickers]);
+
+  React.useEffect(() => {
+    if (!pendingAssistant) return;
+    const latest = messages[messages.length - 1];
+    if (error || status === 'streaming' || latest?.role === 'assistant') {
+      setPendingAssistant(false);
+    }
+  }, [error, messages, pendingAssistant, status]);
 
   /**
    * 把所有挂起的 HITL ask_* 工具标成 output-error，让模型在下次请求里
@@ -258,13 +344,35 @@ export function ChatStream({ jobs }: { jobs: Job[] }) {
    *   4. sendMessage 触发新一轮
    */
   function submit(text: string) {
-    const t = text.trim();
+    const t = contextualPrompt(text, canvas);
     if (!t) return;
     if (busy) stop();
     autoSendRef.current = false;
     cancelPendingHITL();
     autoSendRef.current = true;
     resetCanvas();
+    if (shouldAskForJobBeforeMatching(t)) {
+      const userId = makeLocalMessageId('local-user');
+      const assistantId = makeLocalMessageId('local-assistant');
+      setMessages((prev) => [
+        ...prev,
+        { id: userId, role: 'user', parts: [{ type: 'text', text: t }] },
+        {
+          id: assistantId,
+          role: 'assistant',
+          parts: [{ type: 'text', text: '先选一个职位，我会直接用这个职位去做匹配度排序。' }],
+        },
+      ]);
+      setJobPickers((prev) => [
+        ...prev,
+        { messageId: assistantId, sourceText: t, topK: parseTopK(t) },
+      ]);
+      setPendingAssistant(false);
+      setInput('');
+      textareaRef.current?.focus();
+      return;
+    }
+    setPendingAssistant(true);
     void sendMessage({ text: t });
     setInput('');
     textareaRef.current?.focus();
@@ -285,6 +393,21 @@ export function ChatStream({ jobs }: { jobs: Job[] }) {
     }
     submit(p.text);
   }
+
+  function chooseJobForMatching(picker: JobPickerState, job: Job) {
+    setJobPickers((prev) => prev.filter((p) => p.messageId !== picker.messageId));
+    submit(`把 ${formatJobLabel(job, { maxTitle: 18 })} 的候选人按匹配度排个序，给我 top ${picker.topK}。`);
+  }
+
+  const initialPromptSentRef = React.useRef(false);
+  React.useEffect(() => {
+    if (!initialPrompt || initialPromptSentRef.current || busy) return;
+    initialPromptSentRef.current = true;
+    resetCanvas();
+    setPendingAssistant(true);
+    void sendMessage({ text: initialPrompt });
+    textareaRef.current?.focus();
+  }, [busy, initialPrompt, resetCanvas, sendMessage]);
 
   // 适配 addToolResult 的类型（库要求 tool 是泛型字面量，我们这里运行时已知合法名字）
   const onAddToolResult: AddToolResult = (args) => {
@@ -311,7 +434,7 @@ export function ChatStream({ jobs }: { jobs: Job[] }) {
                     <strong>推荐候选人</strong>，以及 <strong>汇总招聘漏斗</strong>。
                   </div>
                   <div className="prompt-grid">
-                    {QUICK_PROMPTS.map((p) => {
+                    {quickPrompts.map((p) => {
                       const Icon = p.icon;
                       return (
                         <button
@@ -356,9 +479,80 @@ export function ChatStream({ jobs }: { jobs: Job[] }) {
                       renderMessagePart(p, i, { addToolResult: onAddToolResult, busy }),
                     )}
                   </div>
+                  {m.role === 'assistant' &&
+                    jobPickers
+                      .filter((p) => p.messageId === m.id)
+                      .map((picker) => (
+                        <div key={picker.messageId} className="job-picker">
+                          <div className="job-picker-head">
+                            <Briefcase size={12} />
+                            最近录入的 {jobs.length} 个职位
+                          </div>
+                          {jobs.length === 0 ? (
+                            <div className="job-picker-empty">还没有可选择的职位。</div>
+                          ) : (
+                            <div className="job-picker-list">
+                              {jobs.map((job) => (
+                                <button
+                                  key={job.id}
+                                  type="button"
+                                  className="job-picker-item"
+                                  onClick={() => chooseJobForMatching(picker, job)}
+                                  disabled={busy}
+                                >
+                                  <span className="job-picker-title">
+                                    {formatJobLabel(job, { maxTitle: 16 })}
+                                  </span>
+                                  <span className="job-picker-meta">
+                                    {job.dept} · {job.status} · {job.createdAt}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                  {m.role === 'assistant' && !busy && (
+                    <div className="suggestion-bubbles">
+                      {buildAssistantSuggestions(canvas).map((action) => {
+                        const Icon = action.icon;
+                        return (
+                          <button
+                            key={action.text}
+                            type="button"
+                            className="suggestion-chip"
+                            onClick={() => submit(action.prompt ?? action.text)}
+                          >
+                            <Icon size={12} />
+                            <span>{action.text}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
             ))}
+
+            {pendingAssistant && status !== 'streaming' && (
+              <div className="msg">
+                <div className="msg-avatar agent">R</div>
+                <div className="msg-body">
+                  <div className="msg-header">
+                    <span className="msg-name">{agentName}</span>
+                    <span className="msg-tag">招聘 Agent</span>
+                    <span className="stream-dot" />
+                  </div>
+                  <div className="msg-text">
+                    <span className="thinking">
+                      <span className="thinking-dot" />
+                      <span className="thinking-dot" />
+                      <span className="thinking-dot" />
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* §6.6.4 LLM 中断红 banner + 重试 */}
             {error && (
@@ -467,6 +661,7 @@ export function ChatStream({ jobs }: { jobs: Job[] }) {
             {canvas.kind === 'jd-draft' && <JDDraft data={canvas.data} />}
             {canvas.kind === 'match-list' && <Recommendation data={canvas.data} />}
             {canvas.kind === 'pipeline-report' && <Report data={canvas.data} />}
+            {canvas.kind === 'question-set' && <QuestionSet data={canvas.data} />}
             {canvas.kind === 'resume-upload' && <ResumeUpload jobs={jobs} />}
             {canvas.kind === 'resume-scan' && (
               <ResumeScan

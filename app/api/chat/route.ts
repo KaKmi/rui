@@ -1,5 +1,6 @@
 import { streamText, convertToModelMessages, type UIMessage } from 'ai';
 import { mimoModel } from '@/lib/ai/mimo';
+import { inferForcedToolRoute } from '@/lib/ai/chat-routing';
 import { SYSTEM_PROMPT } from '@/lib/ai/prompts/system';
 import { ruiTools } from '@/lib/ai/tools';
 import { withApiLog } from '@/lib/api-log';
@@ -21,12 +22,25 @@ export const POST = withApiLog('POST /api/chat', async (req) => {
     userPreview: userPreview.slice(0, 100),
   });
 
+  const forceRoute = messages[messages.length - 1]?.role === 'user'
+    ? inferForcedToolRoute(userPreview)
+    : null;
+  if (forceRoute) {
+    log.info('chat/tool-route', {
+      toolName: forceRoute.toolName,
+      reason: forceRoute.reason,
+    });
+  }
+
   const t0 = Date.now();
   const result = streamText({
     model: mimoModel,
-    system: SYSTEM_PROMPT,
+    system: forceRoute
+      ? `${SYSTEM_PROMPT}\n\n## 本轮强制工具路由\n${forceRoute.instruction}`
+      : SYSTEM_PROMPT,
     messages: await convertToModelMessages(messages),
     tools: ruiTools,
+    toolChoice: forceRoute ? { type: 'tool', toolName: forceRoute.toolName } : undefined,
     onError: ({ error }) => {
       log.error('chat/stream-error', {
         err: error instanceof Error ? error.message : String(error),

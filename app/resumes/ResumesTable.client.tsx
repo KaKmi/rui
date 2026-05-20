@@ -6,6 +6,7 @@ import { Search, Filter, ChevronDown, Upload } from '@/components/icons/Icon';
 import { Chip } from '@/components/ui/Chip';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { ScoreRing } from '@/components/ui/ScoreRing';
+import { formatJobLabel, truncateText } from '@/lib/display';
 import { badgeVariantOfScore, verdictOfScore } from '@/lib/score-tone';
 import type { Job, Resume } from '@/types';
 
@@ -139,7 +140,8 @@ export function ResumesTable({ resumes, jobs }: { resumes: Resume[]; jobs: Job[]
             <tbody>
               {filtered.map((r) => {
                 const job = jobs.find((j) => j.id === r.appliedFor);
-                const displayName = r.name ?? `候选人 ${r.id}`;
+                const fullName = r.name ?? `候选人 ${r.id}`;
+                const displayName = truncateText(fullName, 8);
                 const displayLocation = r.location ?? '地点待识别';
                 const displayCurrent = r.current ?? '当前公司待识别';
                 const displayExpected = r.expected ?? '待识别';
@@ -157,6 +159,7 @@ export function ResumesTable({ resumes, jobs }: { resumes: Resume[]; jobs: Job[]
                           fontWeight: 500,
                           textDecoration: 'none',
                         }}
+                        title={fullName}
                       >
                         {displayName}
                         <div
@@ -188,8 +191,8 @@ export function ResumesTable({ resumes, jobs }: { resumes: Resume[]; jobs: Job[]
                             textDecoration: 'none',
                           }}
                         >
-                          {job.title}
-                          <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>{job.id}</div>
+                          {formatJobLabel(job, { maxTitle: 12 })}
+                          <div style={{ fontSize: 11, color: 'var(--fg-3)' }}>{job.dept}</div>
                         </Link>
                       ) : (
                         <span style={{ color: 'var(--fg-3)' }}>{r.appliedFor}</span>

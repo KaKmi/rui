@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { Send } from '@/components/icons/Icon';
 import { Chip } from '@/components/ui/Chip';
 import { ScoreRing } from '@/components/ui/ScoreRing';
+import { formatJobLabel } from '@/lib/display';
 import { badgeVariantOfScore, verdictOfScore } from '@/lib/score-tone';
 
 export type MatchListData = {
@@ -10,9 +11,9 @@ export type MatchListData = {
     id: string;
     name: string;
     score: number | null;
-    yoe: number;
-    current: string;
-    expected: string;
+    yoe: number | null;
+    current: string | null;
+    expected: string | null;
     summary: string;
   }>;
 };
@@ -25,7 +26,7 @@ export function Recommendation({ data }: { data: MatchListData }) {
           {data.job.id} · {data.job.dept}
         </div>
         <div style={{ fontSize: 'var(--t-lg)', fontWeight: 600, color: 'var(--fg-0)', marginTop: 4 }}>
-          Top {data.candidates.length} 候选人 · {data.job.title}
+          Top {data.candidates.length} 候选人 · {formatJobLabel(data.job, { maxTitle: 12 })}
         </div>
       </div>
 
@@ -41,12 +42,12 @@ export function Recommendation({ data }: { data: MatchListData }) {
             <ScoreRing value={c.score} size={40} stroke={4} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="rank-name">
-                {c.name}
-                <span className="rank-meta">
-                  {' '}
-                  · {c.current} · {c.yoe} 年 · 期望 {c.expected}
-                </span>
-              </div>
+                  {c.name}
+                  <span className="rank-meta">
+                    {' '}
+                   · {c.current ?? '当前公司待识别'} · {c.yoe == null ? '年限待识别' : `${c.yoe} 年`} · 期望 {c.expected ?? '待识别'}
+                  </span>
+                </div>
               <div className="rank-meta" style={{ marginTop: 4, color: 'var(--fg-2)' }}>
                 {c.summary}
               </div>

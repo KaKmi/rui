@@ -1,6 +1,7 @@
 import { tool } from 'ai';
 import { z } from 'zod';
 import { prisma } from '@/lib/db';
+import { truncateText } from '@/lib/display';
 import { toResumeDTO } from '@/lib/dto';
 
 /**
@@ -38,7 +39,7 @@ export const matchCandidates = tool({
         yoe: r.yoe,
         current: r.current,
         expected: r.expected,
-        summary: r.summary?.slice(0, 80) ?? '',
+        summary: truncateText(r.summary, 60),
       })),
     };
   },

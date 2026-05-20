@@ -15,6 +15,7 @@ import {
 import { Badge } from '@/components/ui/Badge';
 import { Chip } from '@/components/ui/Chip';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { formatJobLabel } from '@/lib/display';
 import type { Job, JobStatus } from '@/types';
 
 type TabValue = 'all' | JobStatus;
@@ -177,12 +178,12 @@ function JobCard({ job }: { job: Job }) {
                 letterSpacing: '-0.01em',
               }}
             >
-              {job.title}
+              {formatJobLabel(job, { maxTitle: 12 })}
             </div>
             <Badge variant={variant}>{job.status}</Badge>
           </div>
           <div style={{ fontSize: 11, color: 'var(--fg-3)', marginTop: 4 }}>
-            {job.id} · {job.dept}
+            {job.dept}
           </div>
         </div>
       </div>

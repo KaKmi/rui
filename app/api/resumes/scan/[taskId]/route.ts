@@ -11,6 +11,8 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
+const SCAN_CONCURRENCY = 3;
+
 type Ctx = { params: { taskId: string } };
 
 type ScanMessage =
@@ -50,6 +52,27 @@ function encodeSSE(message: ScanMessage): Uint8Array {
   return new TextEncoder().encode(`data: ${JSON.stringify(message)}\n\n`);
 }
 
+async function runConcurrent<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  let cursor = 0;
+
+  async function next(): Promise<void> {
+    const index = cursor;
+    cursor += 1;
+    if (index >= items.length) return;
+    const item = items[index];
+    if (item !== undefined) {
+      await worker(item, index);
+    }
+    await next();
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, next));
+}
+
 export const GET = withApiLog<Ctx>(
   'GET /api/resumes/scan/[taskId]',
   async (req, { params }) => {
@@ -69,9 +92,7 @@ export const GET = withApiLog<Ctx>(
         log.info('scan/start', { taskId, total: resumeIds.length });
         send({ type: 'start', taskId, total: resumeIds.length });
 
-        for (let i = 0; i < resumeIds.length; i += 1) {
-          const resumeId = resumeIds[i];
-          if (!resumeId) continue;
+        await runConcurrent(resumeIds, SCAN_CONCURRENCY, async (resumeId, i) => {
           send({
             type: 'resume-start',
             taskId,
@@ -94,7 +115,7 @@ export const GET = withApiLog<Ctx>(
             log.warn('scan/resume-error', { taskId, resumeId, error });
             send({ type: 'resume-error', taskId, id: resumeId, error });
           }
-        }
+        });
 
         const done: ScanMessage = {
           type: 'done',
