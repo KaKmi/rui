@@ -2,22 +2,24 @@
 
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
-import { Send, X } from '@/components/icons/Icon';
+import { Refresh, Send, X } from '@/components/icons/Icon';
 import { Chip } from '@/components/ui/Chip';
 import { useToast } from '@/lib/store/toast';
 import type { ResumeStatus } from '@/types';
 
 /**
- * 简历池表格行的紧凑操作：邀面 / 不合适。
+ * 简历池表格行的紧凑操作：邀面 / 不合适 / 重评。
  *
  * 行为：
- *   - 已邀面 / 已 offer → 只显示状态 chip
- *   - 已淘汰 → 只显示状态 chip
- *   - 解析失败 → 不可操作（按钮全灰）
- *   - 其他态 → 两个图标按钮
+ *   - 已邀面 / 已 offer → 状态 chip（终态，不再操作）
+ *   - 已淘汰 → 状态 chip
+ *   - 解析失败 → 状态 chip
+ *   - 待评分 / AI 已评分 → 三个图标按钮（reject · rescore · invite）
  *
  * 与详情页 ResumeActions.client 共用同一组 API，按钮尺寸更小。
  */
+type Action = 'invite' | 'reject' | 'rescore';
+
 export function ResumeRowActions({
   resumeId,
   name,
@@ -29,9 +31,9 @@ export function ResumeRowActions({
 }) {
   const router = useRouter();
   const pushToast = useToast((s) => s.push);
-  const [pending, setPending] = React.useState<'invite' | 'reject' | null>(null);
+  const [pending, setPending] = React.useState<Action | null>(null);
 
-  const stop = (e: React.MouseEvent) => {
+  const stopEvt = (e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
   };
@@ -46,8 +48,8 @@ export function ResumeRowActions({
     return <Chip variant="bad">解析失败</Chip>;
   }
 
-  async function run(action: 'invite' | 'reject', e: React.MouseEvent) {
-    stop(e);
+  async function run(action: Action, e: React.MouseEvent) {
+    stopEvt(e);
     if (pending) return;
     setPending(action);
     try {
@@ -62,8 +64,13 @@ export function ResumeRowActions({
         return;
       }
       pushToast({
-        text: action === 'invite' ? `已邀约 ${name} 面试` : `已将 ${name} 标记为不合适`,
-        tone: action === 'invite' ? 'ok' : 'info',
+        text:
+          action === 'invite'
+            ? `已邀约 ${name} 面试`
+            : action === 'reject'
+              ? `已将 ${name} 标记为不合适`
+              : `${name} 重新评分完成`,
+        tone: action === 'reject' ? 'info' : 'ok',
       });
       router.refresh();
     } catch (err) {
@@ -77,7 +84,7 @@ export function ResumeRowActions({
   }
 
   return (
-    <div style={{ display: 'inline-flex', gap: 4 }} onClick={stop}>
+    <div style={{ display: 'inline-flex', gap: 4 }} onClick={stopEvt}>
       <button
         type="button"
         className="btn btn-ghost btn-sm"
@@ -87,6 +94,16 @@ export function ResumeRowActions({
         disabled={pending !== null}
       >
         {pending === 'reject' ? <span className="spin-mini" /> : <X size={12} />}
+      </button>
+      <button
+        type="button"
+        className="btn btn-ghost btn-sm"
+        title="重新评分（用当前 JD 重评一次）"
+        aria-label={`重新评分 ${name}`}
+        onClick={(e) => run('rescore', e)}
+        disabled={pending !== null}
+      >
+        {pending === 'rescore' ? <span className="spin-mini" /> : <Refresh size={12} />}
       </button>
       <button
         type="button"

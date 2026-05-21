@@ -11,22 +11,43 @@ import { badgeVariantOfScore, verdictOfScore } from '@/lib/score-tone';
 import type { Job, Resume } from '@/types';
 import { ResumeRowActions } from './ResumeRowActions.client';
 
+type StatusGroup = 'active' | 'invited' | 'rejected' | 'failed' | 'all';
+
+const STATUS_GROUP_OF: Record<Resume['status'], Exclude<StatusGroup, 'all'>> = {
+  '待评分': 'active',
+  'AI 已评分': 'active',
+  '已邀面': 'invited',
+  '已 offer': 'invited',
+  '已淘汰': 'rejected',
+  '解析失败': 'failed',
+};
+
 export function ResumesTable({ resumes, jobs }: { resumes: Resume[]; jobs: Job[] }) {
   const [jdFilter, setJdFilter] = React.useState<string>('all');
   const [minScore, setMinScore] = React.useState<number>(0);
   const [query, setQuery] = React.useState('');
+  // 默认聚焦"待处理"（待评分 + AI 已评分），HR 进来就看活跃池
+  const [statusGroup, setStatusGroup] = React.useState<StatusGroup>('active');
+
+  const groupCounts = React.useMemo(() => {
+    const counts = { active: 0, invited: 0, rejected: 0, failed: 0 };
+    for (const r of resumes) counts[STATUS_GROUP_OF[r.status]] += 1;
+    return counts;
+  }, [resumes]);
 
   const filtered = React.useMemo(() => {
     const q = query.trim().toLowerCase();
     return resumes.filter((r) => {
+      if (statusGroup !== 'all' && STATUS_GROUP_OF[r.status] !== statusGroup) return false;
       if (jdFilter !== 'all' && r.appliedFor !== jdFilter) return false;
       if (r.score != null && r.score < minScore) return false;
       if (q && !`${r.name}${r.current}${r.id}`.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [resumes, jdFilter, minScore, query]);
+  }, [resumes, statusGroup, jdFilter, minScore, query]);
 
-  const cleared = jdFilter !== 'all' || minScore > 0 || query.length > 0;
+  const cleared =
+    statusGroup !== 'active' || jdFilter !== 'all' || minScore > 0 || query.length > 0;
 
   return (
     <div className="page">
@@ -42,6 +63,30 @@ export function ResumesTable({ resumes, jobs }: { resumes: Resume[]; jobs: Job[]
             <Upload size={12} /> 批量上传简历
           </Link>
         </div>
+      </div>
+
+      <div className="filter-tabs" role="tablist" aria-label="按状态筛选">
+        {(
+          [
+            { key: 'active' as StatusGroup, label: '待处理', count: groupCounts.active },
+            { key: 'invited' as StatusGroup, label: '已邀面', count: groupCounts.invited },
+            { key: 'rejected' as StatusGroup, label: '已淘汰', count: groupCounts.rejected },
+            { key: 'failed' as StatusGroup, label: '解析失败', count: groupCounts.failed },
+            { key: 'all' as StatusGroup, label: '全部', count: resumes.length },
+          ]
+        ).map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={statusGroup === t.key}
+            className={`filter-tab${statusGroup === t.key ? ' is-active' : ''}`}
+            onClick={() => setStatusGroup(t.key)}
+          >
+            {t.label}
+            <span className="filter-tab-count">{t.count}</span>
+          </button>
+        ))}
       </div>
 
       <div className="filter-row">
