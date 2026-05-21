@@ -26,7 +26,6 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.78",
     "@ai-sdk/react": "^3.0.186",
-    "@napi-rs/canvas": "^1.0.0",
     "@neondatabase/serverless": "^1.1.0",
     "@prisma/adapter-neon": "^7.8.0",
     "@prisma/client": "^7.8.0",
@@ -35,10 +34,10 @@
     "clsx": "^2.1.1",
     "mammoth": "^1.12.0",
     "next": "14.2.35",
-    "pdf-parse": "^2.4.5",
     "react": "^18",
     "react-dom": "^18",
     "tencentcloud-sdk-nodejs-ocr": "^4.1.233",
+    "unpdf": "^1.6.2",
     "ws": "^8.20.1",
     "zod": "^4.4.3",
     "zustand": "^5.0.13"
@@ -47,7 +46,6 @@
     "@playwright/test": "^1.60.0",
     "@testing-library/react": "^16.3.2",
     "@types/node": "^20",
-    "@types/pdf-parse": "^1.1.5",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "@types/ws": "^8.18.1",
